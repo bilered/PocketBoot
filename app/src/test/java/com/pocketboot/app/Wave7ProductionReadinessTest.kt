@@ -99,8 +99,8 @@ class Wave7ProductionReadinessTest {
         assertEquals("/data/media/0/ISOs/multiboot.img", cfg.downloadTargetMultiBootPath)
         assertEquals(listOf("/data/media/0/Download", "/data/media/0/ISOs"), cfg.scanDirs)
         assertEquals(listOf("https://example.org/distros.json"), cfg.customRepoUrls)
-        assertEquals(setOf("/data/media/0/ISOs/win11.iso"), cfg.pinnedFiles)
-        assertEquals(setOf("/data/media/0/ISOs/old.iso"), cfg.hiddenFiles)
+        assertEquals(listOf("/data/media/0/ISOs/win11.iso"), cfg.pinnedFiles)
+        assertEquals(listOf("/data/media/0/ISOs/old.iso"), cfg.hiddenFiles)
         assertEquals(1, cfg.dualLunCombos.size)
         assertEquals("Good", cfg.dualLunCombos.first().name)
 

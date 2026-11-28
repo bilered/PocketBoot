@@ -357,8 +357,8 @@ class AppPrefs(context: Context) {
                 put("systemTweaksPresets", tweaksPresetsArr)
                 put("systemTweaksSearchHistory", JSONArray(settings.systemTweaksSearchHistory.take(AppSettings.MAX_TWEAKS_SEARCH_HISTORY)))
                 put("dualLunCombos", encodeDualLunCombosJson(settings.dualLunCombos))
-                put("pinnedFiles", JSONArray(settings.pinnedFiles.toList()))
-                put("hiddenFiles", JSONArray(settings.hiddenFiles.toList()))
+                put("pinnedFiles", JSONArray(settings.pinnedFiles))
+                put("hiddenFiles", JSONArray(settings.hiddenFiles))
             }.toString(2)
         }
 
@@ -392,7 +392,7 @@ class AppPrefs(context: Context) {
                     if (k.isNotBlank() && ShellSafety.isCleanAbsolutePath(k) && v.isNotBlank()) modesMap[k] = v
                 }
             }
-            fun parseCleanPathSet(key: String, fallback: Set<String>): Set<String> {
+            fun parseCleanPathList(key: String, fallback: List<String>): List<String> {
                 if (!obj.has(key)) return fallback
                 val out = linkedSetOf<String>()
                 obj.optJSONArray(key)?.let { arr ->
@@ -401,7 +401,7 @@ class AppPrefs(context: Context) {
                         if (p.isNotEmpty() && ShellSafety.isCleanAbsolutePath(p)) out.add(p)
                     }
                 }
-                return out
+                return out.toList()
             }
             val rawTargetMb = obj.optString("downloadTargetMultiBootPath", current.downloadTargetMultiBootPath).trim()
             val safeTargetMb = if (rawTargetMb.isEmpty() || ShellSafety.isCleanAbsolutePath(rawTargetMb)) rawTargetMb else current.downloadTargetMultiBootPath
@@ -460,8 +460,8 @@ class AppPrefs(context: Context) {
                 systemTweaksPresets = if (obj.has("systemTweaksPresets")) tweaksPresets else current.systemTweaksPresets,
                 systemTweaksSearchHistory = if (obj.has("systemTweaksSearchHistory")) parsedHistory.take(AppSettings.MAX_TWEAKS_SEARCH_HISTORY) else current.systemTweaksSearchHistory,
                 dualLunCombos = if (obj.has("dualLunCombos")) parseDualLunCombosJson(obj.optJSONArray("dualLunCombos")?.toString().orEmpty()) else current.dualLunCombos,
-                pinnedFiles = parseCleanPathSet("pinnedFiles", current.pinnedFiles),
-                hiddenFiles = parseCleanPathSet("hiddenFiles", current.hiddenFiles)
+                pinnedFiles = parseCleanPathList("pinnedFiles", current.pinnedFiles),
+                hiddenFiles = parseCleanPathList("hiddenFiles", current.hiddenFiles)
             )
         }.getOrNull()
     }
