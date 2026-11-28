@@ -87,7 +87,7 @@ object BuildThermalHelper {
         ).exec()
     }
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun configureThermal(profile: BuildThermalProfile, autoCooldown: Boolean) {
         defaultThermalProfile = profile

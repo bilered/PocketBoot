@@ -205,6 +205,7 @@ object WindowsDirectCatalog {
         }
         return try {
             val code = conn.responseCode
+            require(conn.url.protocol.equals("https", ignoreCase = true)) { "Rejected redirect to non-HTTPS URL." }
             if (uri != null) {
                 runCatching { localCookieManager.put(uri, conn.headerFields) }
             }
@@ -460,6 +461,8 @@ object WindowsDirectCatalog {
                 mainHandler.post {
                     runCatching {
                         wv?.stopLoading()
+                        wv?.loadUrl("about:blank")
+                        wv?.removeJavascriptInterface("PocketBootBridge")
                         wv?.destroy()
                     }
                     wv = null
@@ -480,6 +483,8 @@ object WindowsDirectCatalog {
                     webView.settings.domStorageEnabled = true
                     webView.settings.allowFileAccess = false
                     webView.settings.allowContentAccess = false
+                    webView.settings.loadsImagesAutomatically = false
+                    webView.settings.blockNetworkImage = true
                     webView.settings.userAgentString = UA
                     WebCookieManager.getInstance().setAcceptCookie(true)
                     WebCookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
@@ -499,7 +504,9 @@ object WindowsDirectCatalog {
                     val triggered = AtomicBoolean(false)
                     webView.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
-                            if (view == null || finished.get() || !triggered.compareAndSet(false, true)) return
+                            val loaded = url.orEmpty()
+                            if (view == null || finished.get() || !loaded.startsWith("https://www.microsoft.com", ignoreCase = true)) return
+                            if (!triggered.compareAndSet(false, true)) return
                             val safeUrl = apiUrl.replace("\\", "\\\\").replace("'", "\\'")
                             val js = """
                                 (function(){

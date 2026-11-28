@@ -30,6 +30,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -95,11 +98,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -527,16 +530,31 @@ private fun serializeDistrosJson(list: List<CuratedIso>): String {
 }
 
 private suspend fun fetchUrlText(urlStr: String): String? = withContext(Dispatchers.IO) {
+    if (!ShellSafety.isValidHttpUrl(urlStr)) return@withContext null
     runCatching {
-        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+        val conn = (URL(urlStr.trim()).openConnection() as HttpURLConnection).apply {
             connectTimeout = 9000
             readTimeout = 12000
             instanceFollowRedirects = true
             setRequestProperty("User-Agent", "PocketBoot-Android")
         }
         try {
-            if (conn.responseCode in 200..299) {
-                conn.inputStream.bufferedReader().use { it.readText() }
+            val code = conn.responseCode
+            val finalUrl = conn.url.toString()
+            if (ShellSafety.isForbiddenHttpsDowngrade(urlStr, finalUrl)) return@withContext null
+            if (code in 200..299) {
+                val maxChars = 4 * 1024 * 1024
+                val sb = StringBuilder()
+                val buf = CharArray(8192)
+                conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    while (true) {
+                        val r = reader.read(buf)
+                        if (r <= 0) break
+                        if (sb.length + r > maxChars) return@withContext null
+                        sb.append(buf, 0, r)
+                    }
+                }
+                sb.toString()
             } else null
         } finally {
             conn.disconnect()
@@ -649,13 +667,13 @@ fun DownloadScreen(
     var showAddFolderDialog by remember { mutableStateOf(false) }
 
     var selectedWindowsFamily by remember { mutableStateOf<WindowsCatalogFamily?>(null) }
-    var showOtherWindowsVersions by remember { mutableStateOf(false) }
+    var showOtherWindowsVersions by rememberSaveable { mutableStateOf(false) }
     var selectedDistroForVersion by remember { mutableStateOf<CuratedIso?>(null) }
     var longPressedDistro by remember { mutableStateOf<CuratedIso?>(null) }
     var longPressedWindows by remember { mutableStateOf<WindowsCatalogFamily?>(null) }
-    var catalogSearch by remember { mutableStateOf("") }
-    var customUrl by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("All") }
+    var catalogSearch by rememberSaveable { mutableStateOf("") }
+    var customUrl by rememberSaveable { mutableStateOf("") }
+    var selectedCategory by rememberSaveable { mutableStateOf("All") }
     var autoMount by remember { mutableStateOf(true) }
 
     val anyDownloadActive = turboState != null
@@ -768,14 +786,33 @@ fun DownloadScreen(
     val nonWinDistros = remember(distroList) {
         distroList.filterNot { it.category.equals("Windows", true) }
     }
+    val q = catalogSearch.trim().lowercase()
+    val matchedWinFamilies = remember(q) {
+        if (q.isEmpty()) WindowsCatalogFamily.entries.toList()
+        else WindowsCatalogFamily.entries.filter {
+            it.title.lowercase().contains(q) ||
+                it.subtitle.lowercase().contains(q) ||
+                it.searchTags.lowercase().contains(q) ||
+                "windows".contains(q)
+        }
+    }
+    val matchedNonWin = remember(nonWinDistros, q) {
+        if (q.isEmpty()) nonWinDistros
+        else nonWinDistros.filter { iso ->
+            iso.title.lowercase().contains(q) ||
+                iso.subtitle.lowercase().contains(q) ||
+                iso.category.lowercase().contains(q) ||
+                iso.effectiveVersions.any { it.label.lowercase().contains(q) }
+        }
+    }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-            .verticalScroll(rememberScrollState()),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        item(key = "dl_header_controls") {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = PocketColors.surfaceCard,
@@ -784,11 +821,7 @@ fun DownloadScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(PocketColors.accentBg.copy(alpha = 0.45f), PocketColors.surfaceCard)
-                        )
-                    )
+                    .background(PocketColors.surfaceCard)
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -1126,14 +1159,14 @@ fun DownloadScreen(
                                         cm?.setPrimaryClip(ClipData.newPlainText("SHA-256", done.computedSha256))
                                         Toast.makeText(context, "SHA-256 copied.", Toast.LENGTH_SHORT).show()
                                     },
-                                    modifier = Modifier.size(30.dp)
+                                    modifier = Modifier.size(44.dp)
                                 ) {
                                     Icon(Icons.Rounded.ContentCopy, "Copy SHA-256", tint = PocketColors.accentSoft, modifier = Modifier.size(16.dp))
                                 }
                             }
                             IconButton(
                                 onClick = { FastIsoDownloader.dismissLastCompletion() },
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(44.dp)
                             ) {
                                 Icon(Icons.Rounded.Close, "Dismiss", tint = PocketColors.textMuted, modifier = Modifier.size(16.dp))
                             }
@@ -1250,7 +1283,7 @@ fun DownloadScreen(
                                     FastIsoDownloader.discardPendingDownload(item)
                                     pendingResumables = FastIsoDownloader.scanPendingResumableDownloads(context)
                                 },
-                                modifier = Modifier.size(34.dp)
+                                modifier = Modifier.size(44.dp)
                             ) {
                                 Icon(Icons.Rounded.DeleteOutline, "Discard", tint = PocketColors.danger, modifier = Modifier.size(18.dp))
                             }
@@ -1295,11 +1328,7 @@ fun DownloadScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(PocketColors.accentBg.copy(alpha = 0.55f), PocketColors.surfaceCard)
-                                )
-                            )
+                            .background(PocketColors.surfaceCard)
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -1311,8 +1340,15 @@ fun DownloadScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(dl.title, style = MaterialTheme.typography.titleMedium, color = PocketColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                                    Surface(shape = RoundedCornerShape(5.dp), color = PocketColors.warningBg) {
-                                        Text("⚡ ${dl.activeThreads}x", modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = PocketColors.warning)
+                                    Surface(shape = RoundedCornerShape(6.dp), color = PocketColors.warningBg) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Icon(Icons.Rounded.Bolt, contentDescription = null, tint = PocketColors.warning, modifier = Modifier.size(12.dp))
+                                            Text("${dl.activeThreads}x", style = MaterialTheme.typography.labelSmall, color = PocketColors.warning)
+                                        }
                                     }
                                 }
                                 Text(
@@ -1327,7 +1363,7 @@ fun DownloadScreen(
                                 if (dl.supportsRange && !dl.isVerifying && !dl.isInjectingMultiBoot) {
                                     IconButton(
                                         onClick = { if (dl.isPaused) FastIsoDownloader.resume() else FastIsoDownloader.pause() },
-                                        modifier = Modifier.size(34.dp)
+                                        modifier = Modifier.size(44.dp)
                                     ) {
                                         Icon(
                                             imageVector = if (dl.isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
@@ -1343,7 +1379,7 @@ fun DownloadScreen(
                                         pendingResumables = FastIsoDownloader.scanPendingResumableDownloads(context)
                                         onMessage("Download cancelled.", false)
                                     },
-                                    modifier = Modifier.size(34.dp)
+                                    modifier = Modifier.size(44.dp)
                                 ) {
                                     Icon(Icons.Rounded.Close, "Cancel", tint = PocketColors.danger, modifier = Modifier.size(18.dp))
                                 }
@@ -1463,26 +1499,6 @@ fun DownloadScreen(
                 }
             }
 
-            val q = catalogSearch.trim().lowercase()
-            val matchedWinFamilies = remember(q) {
-                if (q.isEmpty()) WindowsCatalogFamily.entries.toList()
-                else WindowsCatalogFamily.entries.filter {
-                    it.title.lowercase().contains(q) ||
-                        it.subtitle.lowercase().contains(q) ||
-                        it.searchTags.lowercase().contains(q) ||
-                        "windows".contains(q)
-                }
-            }
-            val matchedNonWin = remember(nonWinDistros, q) {
-                if (q.isEmpty()) nonWinDistros
-                else nonWinDistros.filter { iso ->
-                    iso.title.lowercase().contains(q) ||
-                        iso.subtitle.lowercase().contains(q) ||
-                        iso.category.lowercase().contains(q) ||
-                        iso.effectiveVersions.any { it.label.lowercase().contains(q) }
-                }
-            }
-
             if (selectedCategory == "All") {
                 if (matchedWinFamilies.isEmpty() && matchedNonWin.isEmpty()) {
                     Surface(
@@ -1589,37 +1605,24 @@ fun DownloadScreen(
                             }
                         }
 
-                        val grouped = matchedNonWin.groupBy { it.category }
-                        grouped.forEach { (catName, itemsInCat) ->
-                            val (secIcon, secTint, secBg, secLabel) = when (catName.lowercase()) {
-                                "linux" -> listOf(Icons.Rounded.Terminal, PocketColors.success, PocketColors.successBg, "Linux Desktop")
-                                "server" -> listOf(Icons.Rounded.Dns, PocketColors.violet, PocketColors.violetBg, "Server & Homelab")
-                                "security" -> listOf(Icons.Rounded.Security, PocketColors.danger, PocketColors.dangerBg, "Security & Pentest")
-                                "rescue" -> listOf(Icons.Rounded.BuildCircle, PocketColors.warning, PocketColors.warningBg, "Rescue & Repair")
-                                "lightweight" -> listOf(Icons.Rounded.Memory, PocketColors.infoBlue, PocketColors.infoBlueBg, "Lightweight & Netboot")
-                                else -> listOf(Icons.Rounded.Album, PocketColors.accentSoft, PocketColors.accentBg, catName)
-                            }
-                            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                CatalogGroupHeader(
-                                    icon = secIcon as ImageVector,
-                                    title = secLabel as String,
-                                    count = itemsInCat.size,
-                                    tint = secTint as Color,
-                                    bg = secBg as Color
-                                )
-                                itemsInCat.forEach { iso ->
-                                    DistroCatalogCard(
-                                        iso = iso,
-                                        existingFileNames = existingFileNames,
-                                        onClick = { selectedDistroForVersion = iso },
-                                        onLongClick = { longPressedDistro = iso }
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             } else if (selectedCategory.equals("Windows", true)) {
+                if (matchedWinFamilies.isEmpty()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = PocketColors.surfaceCard,
+                        border = BorderStroke(0.5.dp, PocketColors.border)
+                    ) {
+                        Text(
+                            text = "No Windows images matched \"$catalogSearch\".",
+                            modifier = Modifier.padding(18.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = PocketColors.textSecondary
+                        )
+                    }
+                } else {
                 val primaryWin = matchedWinFamilies.filter { it.isPrimaryFamily }
                 val secondaryWin = matchedWinFamilies.filterNot { it.isPrimaryFamily }
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1690,22 +1693,98 @@ fun DownloadScreen(
                         }
                     }
                 }
-            } else {
-                val filtered = matchedNonWin.filter { it.category.equals(selectedCategory, true) }
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    filtered.forEach { iso ->
-                        DistroCatalogCard(
-                            iso = iso,
-                            existingFileNames = existingFileNames,
-                            onClick = { selectedDistroForVersion = iso },
-                            onLongClick = { longPressedDistro = iso }
+                }
+            }
+        }
+        }
+        }
+
+        if (selectedCategory == "All") {
+            val grouped = matchedNonWin.groupBy { it.category }
+            grouped.forEach { (catName, itemsInCat) ->
+                item(key = "cat_hdr_$catName") {
+                    val secIcon = when (catName.lowercase()) {
+                        "linux" -> Icons.Rounded.Terminal
+                        "server" -> Icons.Rounded.Dns
+                        "security" -> Icons.Rounded.Security
+                        "rescue" -> Icons.Rounded.BuildCircle
+                        "lightweight" -> Icons.Rounded.Memory
+                        else -> Icons.Rounded.Album
+                    }
+                    val secTint = when (catName.lowercase()) {
+                        "linux" -> PocketColors.success
+                        "server" -> PocketColors.violet
+                        "security" -> PocketColors.danger
+                        "rescue" -> PocketColors.warning
+                        "lightweight" -> PocketColors.infoBlue
+                        else -> PocketColors.accentSoft
+                    }
+                    val secBg = when (catName.lowercase()) {
+                        "linux" -> PocketColors.successBg
+                        "server" -> PocketColors.violetBg
+                        "security" -> PocketColors.dangerBg
+                        "rescue" -> PocketColors.warningBg
+                        "lightweight" -> PocketColors.infoBlueBg
+                        else -> PocketColors.accentBg
+                    }
+                    val secLabel = when (catName.lowercase()) {
+                        "linux" -> "Linux Desktop"
+                        "server" -> "Server & Homelab"
+                        "security" -> "Security & Pentest"
+                        "rescue" -> "Rescue & Repair"
+                        "lightweight" -> "Lightweight & Netboot"
+                        else -> catName
+                    }
+                    CatalogGroupHeader(
+                        icon = secIcon,
+                        title = secLabel,
+                        count = itemsInCat.size,
+                        tint = secTint,
+                        bg = secBg
+                    )
+                }
+                itemsIndexed(itemsInCat, key = { idx, iso -> "distro_${catName}_${idx}_${iso.title}" }) { _, iso ->
+                    DistroCatalogCard(
+                        iso = iso,
+                        existingFileNames = existingFileNames,
+                        onClick = { selectedDistroForVersion = iso },
+                        onLongClick = { longPressedDistro = iso }
+                    )
+                }
+            }
+        } else if (!selectedCategory.equals("Windows", true)) {
+            val filtered = matchedNonWin.filter { it.category.equals(selectedCategory, true) }
+            if (filtered.isEmpty()) {
+                item(key = "cat_empty_$selectedCategory") {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = PocketColors.surfaceCard,
+                        border = BorderStroke(0.5.dp, PocketColors.border)
+                    ) {
+                        Text(
+                            text = if (q.isNotEmpty()) "No $selectedCategory images matched \"$catalogSearch\"." else "No $selectedCategory images available.",
+                            modifier = Modifier.padding(18.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = PocketColors.textSecondary
                         )
                     }
+                }
+            } else {
+                itemsIndexed(filtered, key = { idx, iso -> "filtered_${selectedCategory}_${idx}_${iso.title}" }) { _, iso ->
+                    DistroCatalogCard(
+                        iso = iso,
+                        existingFileNames = existingFileNames,
+                        onClick = { selectedDistroForVersion = iso },
+                        onLongClick = { longPressedDistro = iso }
+                    )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        item(key = "dl_bottom_spacer") {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 
     selectedWindowsFamily?.let { fam ->
@@ -1764,7 +1843,7 @@ fun DownloadScreen(
                             }
                             IconButton(
                                 onClick = { copyLinkToClipboard("${iso.title} ${ver.label}", ver.url) },
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(44.dp)
                             ) {
                                 Icon(Icons.Rounded.ContentCopy, "Copy link", tint = PocketColors.accentSoft, modifier = Modifier.size(18.dp))
                             }
@@ -1949,7 +2028,7 @@ fun DownloadScreen(
                                 ) {
                                     Column(modifier = Modifier.padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("${n}x", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = if (isSel) PocketColors.accentSoft else PocketColors.textPrimary)
-                                        if (n == 8) Text("Rec", fontSize = 9.5.sp, color = PocketColors.success)
+                                        if (n == 8) Text("Rec", fontSize = 11.sp, color = PocketColors.success)
                                     }
                                 }
                             }

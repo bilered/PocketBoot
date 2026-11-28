@@ -38,6 +38,7 @@ import java.util.zip.ZipInputStream
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 
 enum class ChecksumVerifyStatus {
     NONE,
@@ -141,7 +142,7 @@ class TurboDownloadService : Service() {
                     setReferenceCounted(false)
                 }
             }
-            if (wakeLock?.isHeld == false) wakeLock?.acquire()
+            wakeLock?.acquire(2L * 60L * 60L * 1000L)
         }
         runCatching {
             if (wifiLock == null) {
@@ -215,7 +216,7 @@ object FastIsoDownloader {
 
     private var chunkStarts: LongArray = LongArray(0)
     private var chunkEnds: LongArray = LongArray(0)
-    private var chunkCursors: LongArray = LongArray(0)
+    @Volatile private var chunkCursors: AtomicLongArray = AtomicLongArray(0)
     private var stagingFile: File? = null
     private var sidecarFile: File? = null
     @Volatile private var cachedFinalUrl: String = ""
@@ -232,7 +233,7 @@ object FastIsoDownloader {
     private var cachedOnError: ((String) -> Unit)? = null
     private var cachedOnLog: ((LogEntry) -> Unit)? = null
     @Volatile private var cachedUserAgent: String = BROWSER_UA
-    private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 15) PocketBoot/4.10.0"
+    private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 15) PocketBoot/4.11.0"
     private const val WGET_UA = "Wget/1.21.4"
     private const val CURL_UA = "curl/8.5.0"
     private fun logDl(msg: String, isError: Boolean = false) { cachedOnLog?.invoke(LogEntry(SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()), "download", msg, isError)) }
@@ -319,12 +320,31 @@ object FastIsoDownloader {
         runCatching { File(pending.metaFilePath).delete() }
     }
 
+    /**
+     * Atomically writes JSON sidecar metadata via a sibling `.tmp` file + rename so an unexpected
+     * kill or power loss during periodic progress saves never truncates a valid `.pbmeta` file.
+     */
+    internal fun writeSidecarAtomically(metaFile: File, jsonPayload: String): Boolean {
+        return runCatching {
+            val tmpFile = File(metaFile.parentFile, "${metaFile.name}.tmp")
+            tmpFile.writeText(jsonPayload, Charsets.UTF_8)
+            if (tmpFile.renameTo(metaFile)) {
+                true
+            } else {
+                metaFile.writeText(jsonPayload, Charsets.UTF_8)
+                tmpFile.delete()
+                true
+            }
+        }.getOrDefault(false)
+    }
+
     @Synchronized
     private fun saveSidecarMeta() {
         val cur = _state.value ?: return
         val part = stagingFile ?: return
         val meta = sidecarFile ?: return
-        if (!cur.supportsRange || chunkStarts.isEmpty()) return
+        val cursors = chunkCursors
+        if (!cur.supportsRange || chunkStarts.isEmpty() || cursors.length() < chunkStarts.size) return
         runCatching {
             val obj = JSONObject().apply {
                 put("title", cur.title)
@@ -342,9 +362,11 @@ object FastIsoDownloader {
                 put("threadCount", chunkStarts.size)
                 put("chunkStarts", JSONArray().apply { chunkStarts.forEach { put(it) } })
                 put("chunkEnds", JSONArray().apply { chunkEnds.forEach { put(it) } })
-                put("chunkCursors", JSONArray().apply { chunkCursors.forEach { put(it) } })
+                put("chunkCursors", JSONArray().apply {
+                    for (i in 0 until chunkStarts.size) put(cursors.get(i))
+                })
             }
-            meta.writeText(obj.toString(), Charsets.UTF_8)
+            writeSidecarAtomically(meta, obj.toString())
         }
     }
 
@@ -424,7 +446,11 @@ object FastIsoDownloader {
                 val loc = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (loc.isNullOrBlank()) throw IllegalStateException("Redirect without Location header")
-                current = URL(curUrl, loc).toString()
+                val nextUrl = URL(curUrl, loc).toString()
+                if (ShellSafety.isForbiddenHttpsDowngrade(current, nextUrl)) {
+                    throw IllegalStateException("Blocked insecure HTTPS-to-HTTP redirect from trusted host")
+                }
+                current = nextUrl
                 redirects++
             } else {
                 return conn
@@ -614,19 +640,20 @@ object FastIsoDownloader {
                     RandomAccessFile(tmpFile, "rw").use { it.setLength(probe.totalBytes) }
                     chunkStarts = LongArray(useThreads)
                     chunkEnds = LongArray(useThreads)
-                    chunkCursors = LongArray(useThreads)
+                    val initCursors = AtomicLongArray(useThreads)
                     val slice = probe.totalBytes / useThreads
                     for (i in 0 until useThreads) {
                         val s = i * slice
                         val e = if (i == useThreads - 1) probe.totalBytes - 1L else (s + slice - 1L)
                         chunkStarts[i] = s
                         chunkEnds[i] = e
-                        chunkCursors[i] = s
+                        initCursors.set(i, s)
                     }
+                    chunkCursors = initCursors
                 } else {
                     chunkStarts = longArrayOf(0L)
                     chunkEnds = longArrayOf(if (probe.totalBytes > 0L) probe.totalBytes - 1L else -1L)
-                    chunkCursors = longArrayOf(0L)
+                    chunkCursors = AtomicLongArray(longArrayOf(0L))
                 }
 
                 _state.value = _state.value?.copy(
@@ -650,6 +677,30 @@ object FastIsoDownloader {
         }
     }
 
+    /**
+     * Pure-JVM testable parser & validator for `.pbmeta` chunk arrays (`1..16` equal-length arrays,
+     * non-negative ordered boundaries, and cursors clamped to `start..(end + 1)`).
+     */
+    internal fun parseValidatedSidecarChunks(obj: JSONObject): Triple<LongArray, LongArray, LongArray>? {
+        val sArr = obj.optJSONArray("chunkStarts") ?: return null
+        val eArr = obj.optJSONArray("chunkEnds") ?: return null
+        val cArr = obj.optJSONArray("chunkCursors") ?: return null
+        val n = sArr.length()
+        if (n !in 1..16 || eArr.length() != n || cArr.length() != n) return null
+        val starts = LongArray(n)
+        val ends = LongArray(n)
+        val cursors = LongArray(n)
+        for (i in 0 until n) {
+            val st = sArr.optLong(i, -1L)
+            val en = eArr.optLong(i, -1L)
+            if (st < 0L || en < st) return null
+            starts[i] = st
+            ends[i] = en
+            cursors[i] = cArr.optLong(i, st).coerceIn(st, en + 1L)
+        }
+        return Triple(starts, ends, cursors)
+    }
+
     fun resumeFromSidecar(
         context: Context,
         pending: PendingResumableDownload,
@@ -670,22 +721,21 @@ object FastIsoDownloader {
             return
         }
 
-        val sArr = obj.optJSONArray("chunkStarts")
-        val eArr = obj.optJSONArray("chunkEnds")
-        val cArr = obj.optJSONArray("chunkCursors")
-        if (sArr == null || eArr == null || cArr == null || sArr.length() == 0) {
-            onError("Incomplete resume metadata.")
+        val validated = parseValidatedSidecarChunks(obj)
+        if (validated == null) {
+            onError("Incomplete or corrupted resume metadata.")
             return
         }
+        val (parsedStarts, parsedEnds, parsedCursors) = validated
+        val n = parsedStarts.size
 
         cancel(deleteTemp = false)
         pausedFlag.set(false)
         cancelledFlag.set(false)
 
-        val n = sArr.length()
-        chunkStarts = LongArray(n) { sArr.optLong(it) }
-        chunkEnds = LongArray(n) { eArr.optLong(it) }
-        chunkCursors = LongArray(n) { cArr.optLong(it) }
+        chunkStarts = parsedStarts
+        chunkEnds = parsedEnds
+        chunkCursors = AtomicLongArray(parsedCursors)
         stagingFile = partFile
         sidecarFile = metaFile
         cachedContext = context.applicationContext
@@ -703,7 +753,7 @@ object FastIsoDownloader {
         cachedOnError = onError
         cachedOnLog = onLog
 
-        val done = (0 until n).sumOf { i -> (chunkCursors[i] - chunkStarts[i]).coerceAtLeast(0L) }
+        val done = (0 until n).sumOf { i -> (chunkCursors.get(i) - chunkStarts[i]).coerceAtLeast(0L) }
         _state.value = TurboDownloadState(
             title = pending.title,
             fileName = pending.fileName,
@@ -834,7 +884,7 @@ object FastIsoDownloader {
 
     private suspend fun runDownloadWorkers(threadCount: Int, useRanges: Boolean) {
         val tmpFile = stagingFile ?: throw IllegalStateException("Missing staging file")
-        val initialDone = (0 until threadCount).sumOf { i -> (chunkCursors[i] - chunkStarts[i]).coerceAtLeast(0L) }
+        val initialDone = (0 until threadCount).sumOf { i -> (chunkCursors.get(i) - chunkStarts[i]).coerceAtLeast(0L) }
         val totalDownloaded = AtomicLong(initialDone)
 
         val meterJob = scope.launch {
@@ -1042,8 +1092,8 @@ object FastIsoDownloader {
     private fun extractImageFromZipArchive(context: Context, zipPath: String, targetDir: String): String? = runCatching {
         val localZip = File(zipPath.replaceFirst("/data/media/0", "/storage/emulated/0"))
         val stagedZip = File(context.cacheDir, "pb_extract_in.zip")
-        val qZip = "'${zipPath.replace("'", "'\\''")}'"
-        if (!localZip.canRead()) Shell.cmd("cp -f $qZip '${stagedZip.absolutePath.replace("'", "'\\''")}' 2>/dev/null").exec()
+        val qZip = ShellSafety.shellQuote(zipPath)
+        if (!localZip.canRead()) Shell.cmd("cp -f $qZip ${ShellSafety.shellQuote(stagedZip.absolutePath)} 2>/dev/null").exec()
         val srcFile = if (localZip.canRead()) localZip else stagedZip
         if (!srcFile.exists()) return null
         var extractedName: String? = null
@@ -1066,8 +1116,21 @@ object FastIsoDownloader {
                                     return null
                                 }
                             }
+                            val maxZipExtractBytes = 32L * 1024L * 1024L * 1024L
+                            var written = 0L
+                            val copyBuf = ByteArray(262_144)
+                            outTmp.outputStream().buffered().use { out ->
+                                while (true) {
+                                    val n = zis.read(copyBuf)
+                                    if (n <= 0) break
+                                    written += n.toLong()
+                                    if (written > maxZipExtractBytes) {
+                                        throw IllegalStateException("Archive entry exceeds 32 GB safety limit")
+                                    }
+                                    out.write(copyBuf, 0, n)
+                                }
+                            }
                             extractedName = safeLeaf
-                            outTmp.outputStream().buffered().use { zis.copyTo(it) }
                             break
                         }
                     }
@@ -1081,11 +1144,20 @@ object FastIsoDownloader {
             outTmp.delete()
             return null
         }
+        val expectedOutBytes = outTmp.length()
         val finalOutPath = "${targetDir.trimEnd('/')}/$finalName"
-        if (Shell.cmd("mv -f '${outTmp.absolutePath.replace("'", "'\\''")}' '${finalOutPath.replace("'", "'\\''")}' && rm -f $qZip").exec().isSuccess) {
+        val qTmp = ShellSafety.shellQuote(outTmp.absolutePath)
+        val qDst = ShellSafety.shellQuote(finalOutPath)
+        if (Shell.cmd("mv -f $qTmp $qDst").exec().isSuccess) {
+            val zSz = Shell.cmd("stat -c '%s' $qDst 2>/dev/null || echo 0").exec().out.firstOrNull()?.trim()?.toLongOrNull() ?: 0L
+            if (zSz != expectedOutBytes) {
+                Shell.cmd("rm -f $qDst 2>/dev/null || true").exec()
+                logDl("Extracted image size verification failed ($zSz != $expectedOutBytes); preserved source archive.", isError = true)
+                return null
+            }
+            Shell.cmd("rm -f $qZip 2>/dev/null || true").exec()
             UsbGadgetEngine.fixUserStoragePermissions(context, finalOutPath, false)
-            val zSz = Shell.cmd("stat -c '%s' '${finalOutPath.replace("'", "'\\''")}' 2>/dev/null || echo 0").exec().out.firstOrNull()?.trim()?.toLongOrNull() ?: 0L
-            if (zSz > 0L) UsbGadgetEngine.syncMediaStoreFileSize(context, finalOutPath, zSz)
+            UsbGadgetEngine.syncMediaStoreFileSize(context, finalOutPath, zSz)
             IsoInspector.invalidate(finalOutPath)
             finalOutPath
         } else {
@@ -1136,12 +1208,12 @@ object FastIsoDownloader {
         var attempt = 0
         var refreshCount = 0
         val buf = ByteArray(262_144)
-        while (chunkCursors[idx] <= end && !pausedFlag.get() && !cancelledFlag.get()) {
+        while (chunkCursors.get(idx) <= end && !pausedFlag.get() && !cancelledFlag.get()) {
             val usedUrl = cachedFinalUrl
             val reqStartedMs = System.currentTimeMillis()
             var needRefresh = false
             try {
-                val startPos = chunkCursors[idx]
+                val startPos = chunkCursors.get(idx)
                 val conn = openFollowingRedirects(usedUrl, "GET", rangeHeader = "bytes=$startPos-$end")
                 try {
                     val code = conn.responseCode
@@ -1162,11 +1234,11 @@ object FastIsoDownloader {
                             while (!pausedFlag.get() && !cancelledFlag.get()) {
                                 val read = input.read(buf)
                                 if (read <= 0) break
-                                val remainingInChunk = (end - chunkCursors[idx] + 1L).coerceAtLeast(0L)
+                                val remainingInChunk = (end - chunkCursors.get(idx) + 1L).coerceAtLeast(0L)
                                 val toWrite = minOf(read.toLong(), remainingInChunk).toInt()
                                 if (toWrite <= 0) break
                                 raf.write(buf, 0, toWrite)
-                                chunkCursors[idx] += toWrite.toLong()
+                                chunkCursors.addAndGet(idx, toWrite.toLong())
                                 totalCounter.addAndGet(toWrite.toLong())
                             }
                         }
@@ -1183,7 +1255,7 @@ object FastIsoDownloader {
                     }
                     throw IllegalStateException("Signed download link expired and could not be refreshed on chunk $idx")
                 }
-                if (chunkCursors[idx] <= startPos && !pausedFlag.get() && !cancelledFlag.get()) {
+                if (chunkCursors.get(idx) <= startPos && !pausedFlag.get() && !cancelledFlag.get()) {
                     throw IllegalStateException("Server closed stream with 0 bytes read on chunk $idx")
                 }
                 attempt = 0

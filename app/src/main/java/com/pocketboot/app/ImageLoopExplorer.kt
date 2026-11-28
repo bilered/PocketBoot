@@ -102,7 +102,7 @@ object ImageLoopExplorer {
     private const val TEMP_EXPLORE_MNT = "/data/local/tmp/pb_img_explore_mnt"
     private const val ILLEGAL_FOLDER_CHARS = ":*?\"<>|"
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     internal fun isSelfImportPath(hostFilePath: String, sessionImgPath: String): Boolean {
         val a = UsbGadgetEngine.resolveDirectPath(hostFilePath).trimEnd('/')
@@ -405,8 +405,15 @@ object ImageLoopExplorer {
         val srcSize = Shell.cmd("stat -c '%s' $qSrc 2>/dev/null").exec().out.firstOrNull()?.trim()?.toLongOrNull() ?: -1L
         if (srcSize < 0L) return@withContext ActionResult(false, "File not found inside image.")
         val safeDir = UsbGadgetEngine.resolveDirectPath(destHostDir).trimEnd('/')
-        val fileName = relFilePath.substringAfterLast('/')
+        val rawLeaf = relFilePath.replace('\\', '/').substringAfterLast('/').trim()
+        if (rawLeaf.isEmpty() || rawLeaf == "." || rawLeaf == ".." || rawLeaf.any { it.code < 0x20 }) {
+            return@withContext ActionResult(false, "Refused to export invalid filename.")
+        }
+        val fileName = rawLeaf
         val dst = "$safeDir/$fileName"
+        if (!ShellSafety.isStrictChildPath(safeDir, dst)) {
+            return@withContext ActionResult(false, "Refused to export outside destination folder.")
+        }
         val qDst = shellQuote(dst)
         val existingHostDst = Shell.cmd("stat -c '%s' $qDst 2>/dev/null").exec().out.firstOrNull()?.trim()?.toLongOrNull() ?: 0L
         val rawFreeHost = UsbGadgetEngine.getFreeSpaceBytes(safeDir)
@@ -696,7 +703,7 @@ fun ImageExplorerSheet(
                                                         onMessage(res.userMessage, !res.success)
                                                     }
                                                 },
-                                                modifier = Modifier.size(34.dp)
+                                                modifier = Modifier.size(44.dp)
                                             ) {
                                                 Icon(Icons.Rounded.CloudDownload, "Export to phone", tint = PocketColors.infoBlue, modifier = Modifier.size(18.dp))
                                             }
@@ -704,7 +711,7 @@ fun ImageExplorerSheet(
                                         if (!currentSess.readOnly) {
                                             IconButton(
                                                 onClick = { pendingDelete = item },
-                                                modifier = Modifier.size(34.dp)
+                                                modifier = Modifier.size(44.dp)
                                             ) {
                                                 Icon(Icons.Rounded.DeleteOutline, "Delete", tint = PocketColors.danger, modifier = Modifier.size(18.dp))
                                             }

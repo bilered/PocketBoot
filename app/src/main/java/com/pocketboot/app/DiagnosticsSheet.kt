@@ -141,13 +141,15 @@ object PreFlightDiagnostics {
         val hasExt4 = "ext4" in procFs
 
         val libDir = context.applicationInfo.nativeLibraryDir
-        val has7z = File(libDir, "lib7zzs.so").exists()
-        val hasNtfs = File(libDir, "libmkfs_ntfs.so").exists()
-        val hasNtfs3g = File(libDir, "libntfs_3g.so").exists()
-        val hasMsSys = File(libDir, "libms_sys.so").exists()
-        val hasExfatBin = File(libDir, "libmkfs_exfat.so").exists()
-        val hasFatBin = File(libDir, "libmkfs_fat.so").exists()
-        val hasNtfsResize = File(libDir, "libntfsresize.so").exists()
+        fun hasExec(name: String): Boolean = File(libDir, name).let { it.exists() && it.canExecute() }
+        val has7z = hasExec("lib7zzs.so")
+        val hasZstd = hasExec("libzstd.so")
+        val hasNtfs = hasExec("libmkfs_ntfs.so")
+        val hasNtfs3g = hasExec("libntfs_3g.so")
+        val hasMsSys = hasExec("libms_sys.so")
+        val hasExfatBin = hasExec("libmkfs_exfat.so")
+        val hasFatBin = hasExec("libmkfs_fat.so")
+        val hasNtfsResize = hasExec("libntfsresize.so")
         val hasUefiAsset = runCatching { context.assets.open("uefi-ntfs.img").use { it.available() > 0 } }.getOrDefault(false)
 
         val ntfsMode = when {
@@ -168,13 +170,13 @@ object PreFlightDiagnostics {
             )
         )
 
-        val toolDetail = "Extractor=${if (has7z) "OK" else "NO"} • NTFS=${if (hasNtfs && hasNtfs3g) "OK" else "NO"} • Resize=${if (hasNtfsResize) "OK" else "NO"} • exFAT=${if (hasExfatBin) "OK" else "NO"} • FAT32=${if (hasFatBin) "OK" else "NO"} • MBR=${if (hasMsSys) "OK" else "NO"} • UEFI=${if (hasUefiAsset) "OK" else "NO"}"
+        val toolDetail = "7zzs=${if (has7z) "OK" else "NO"} • zstd=${if (hasZstd) "OK" else "NO"} • NTFS=${if (hasNtfs && hasNtfs3g) "OK" else "NO"} • Resize=${if (hasNtfsResize) "OK" else "NO"} • exFAT=${if (hasExfatBin) "OK" else "NO"} • FAT32=${if (hasFatBin) "OK" else "NO"} • MBR=${if (hasMsSys) "OK" else "NO"} • UEFI=${if (hasUefiAsset) "OK" else "NO"}"
         items.add(
             DiagCheckItem(
                 title = "Bundled Static ARM64 Tools",
                 detail = toolDetail,
                 level = when {
-                    has7z && hasNtfs && hasNtfs3g && hasMsSys && hasUefiAsset -> DiagLevel.PASS
+                    has7z && hasZstd && hasNtfs && hasNtfs3g && hasExfatBin && hasFatBin && hasMsSys && hasUefiAsset -> DiagLevel.PASS
                     has7z && hasNtfs -> DiagLevel.WARN
                     else -> DiagLevel.FAIL
                 }
@@ -224,7 +226,7 @@ object PreFlightDiagnostics {
 
     fun formatReport(items: List<DiagCheckItem>): String {
         val sb = StringBuilder()
-        sb.appendLine("PocketBoot v4.10.0 Pre-Flight Diagnostic Report")
+        sb.appendLine("PocketBoot v4.11.0 Pre-Flight Diagnostic Report")
         sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT}, ABI ${Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"})")
         sb.appendLine("---")
         items.forEach { item ->

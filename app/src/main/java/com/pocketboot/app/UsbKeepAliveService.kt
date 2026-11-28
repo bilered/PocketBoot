@@ -151,9 +151,14 @@ class UsbKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val persistedKeepAdb = runCatching { AppPrefs(this).load().keepAdbActive }.getOrDefault(false)
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: "PocketBoot Virtual USB"
         val subtitle = intent?.getStringExtra(EXTRA_SUBTITLE) ?: "Keep-Alive & Hot-Plug Watchdog active"
-        currentKeepAdb = intent?.getBooleanExtra(EXTRA_KEEP_ADB, false) ?: false
+        currentKeepAdb = if (intent != null && intent.hasExtra(EXTRA_KEEP_ADB)) {
+            intent.getBooleanExtra(EXTRA_KEEP_ADB, persistedKeepAdb)
+        } else {
+            persistedKeepAdb
+        }
 
         val notif = NotificationHelper.buildMountedNotification(this, title, subtitle)
         val promoted = runCatching {
@@ -179,6 +184,31 @@ class UsbKeepAliveService : Service() {
         acquireWakeLock()
         registerHotPlugReceiver()
         LinkWatchdogTracker.setActive(true)
+        if (intent == null) {
+            scope.launch {
+                runCatching {
+                    val live = UsbGadgetEngine.getStatus()
+                    if (!live.isAnyMounted) {
+                        stopSelf(startId)
+                    } else {
+                        val mountedLabel = live.mountedFile.substringAfterLast('/').ifBlank {
+                            live.secondaryMountedFile.substringAfterLast('/').ifBlank { "Virtual Drive" }
+                        }
+                        val liveModeLabel = if (live.mountedFile.isNotBlank()) {
+                            live.activeModeLabel
+                        } else {
+                            live.activeSecondaryModeLabel
+                        }
+                        NotificationHelper.showMounted(
+                            this@UsbKeepAliveService,
+                            mountedLabel,
+                            liveModeLabel,
+                            "Keep-Alive resumed"
+                        )
+                    }
+                }
+            }
+        }
         startWatchdog()
         return START_STICKY
     }
@@ -208,9 +238,7 @@ class UsbKeepAliveService : Service() {
                     setReferenceCounted(false)
                 }
             }
-            if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire()
-            }
+            wakeLock?.acquire(6L * 60L * 60L * 1000L)
         }
     }
 
@@ -285,6 +313,14 @@ class UsbKeepAliveService : Service() {
                 }
             }
         }
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        hotPlugJob?.cancel()
+        watchdogJob?.cancel()
+        LinkWatchdogTracker.setActive(false)
+        releaseWakeLock()
+        stopSelf(startId)
     }
 
     override fun onDestroy() {

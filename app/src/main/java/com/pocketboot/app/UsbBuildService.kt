@@ -82,9 +82,7 @@ class UsbBuildService : Service() {
                     setReferenceCounted(false)
                 }
             }
-            if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire()
-            }
+            wakeLock?.acquire(2L * 60L * 60L * 1000L)
         }
     }
 
@@ -94,6 +92,13 @@ class UsbBuildService : Service() {
                 wakeLock?.release()
             }
         }
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        UsbBuildManager.cancelActiveBuild(null)
+        NotificationHelper.cancelBuildNotification(this)
+        releaseWakeLock()
+        stopSelf(startId)
     }
 
     override fun onDestroy() {
@@ -332,17 +337,6 @@ object UsbBuildManager {
         cancelRequested.set(true)
         BuildThermalHelper.markBuildCancelled()
         val job = currentJob
-        scope.launch {
-            when (activeKind) {
-                UsbBuildKind.WINDOWS -> WindowsImageBuilder.cancelActiveBuild()
-                UsbBuildKind.LINUX -> LinuxImageBuilder.cancelActiveBuild()
-                UsbBuildKind.MULTIBOOT -> VentoyImageBuilder.cancelActiveBuild()
-                UsbBuildKind.DECOMPRESS -> CompressedImageEngine.cancelActiveDecompress()
-                UsbBuildKind.OTG_FLASH -> OtgUsbFlasher.cancelActiveFlash()
-                null -> BuildThermalHelper.cancelActiveBuildProcess()
-            }
-        }
-        job?.cancel()
         context?.applicationContext?.let { ctx ->
             _state.value?.let { cur ->
                 val cancelling = cur.copy(
@@ -351,6 +345,19 @@ object UsbBuildManager {
                 _state.value = cancelling
                 NotificationHelper.updateBuildProgress(ctx, cancelling)
             }
+        }
+        scope.launch {
+            runCatching {
+                when (activeKind) {
+                    UsbBuildKind.WINDOWS -> WindowsImageBuilder.cancelActiveBuild()
+                    UsbBuildKind.LINUX -> LinuxImageBuilder.cancelActiveBuild()
+                    UsbBuildKind.MULTIBOOT -> VentoyImageBuilder.cancelActiveBuild()
+                    UsbBuildKind.DECOMPRESS -> CompressedImageEngine.cancelActiveDecompress()
+                    UsbBuildKind.OTG_FLASH -> OtgUsbFlasher.cancelActiveFlash()
+                    null -> BuildThermalHelper.cancelActiveBuildProcess()
+                }
+            }
+            job?.cancel()
         }
     }
 }

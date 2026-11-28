@@ -64,14 +64,21 @@ object NotificationHelper {
             .setSmallIcon(R.drawable.ic_usb).setOngoing(true).setSilent(true).setOnlyAlertOnce(true).setContentIntent(openAppPending(context, 10))
         if (state == null) return builder.setContentTitle("PocketBoot Turbo Downloader").setContentText("Preparing download...").setProgress(0, 0, true).build()
         val pct = (state.progress * 100f).toInt().coerceIn(0, 100)
-        val title = if (state.isPaused) "Paused: ${state.title}" else "${state.title} ($pct%)"
+        val isPostProcessing = state.isVerifying || state.isInjectingMultiBoot
+        val title = when {
+            state.isVerifying -> "Verifying: ${state.title}"
+            state.isInjectingMultiBoot -> "Moving ISO: ${state.title}"
+            state.isPaused -> "Paused: ${state.title}"
+            else -> "${state.title} ($pct%)"
+        }
         val detail = when {
+            isPostProcessing -> state.statusText.ifBlank { "Finalizing download..." }
             state.isPaused -> "${UsbGadgetEngine.formatBytes(state.downloadedBytes)} / ${UsbGadgetEngine.formatBytes(state.totalBytes)} · Tap Resume"
             state.totalBytes > 0L -> "${FastIsoDownloader.formatSpeed(state.speedBytesPerSec)} · ETA ${FastIsoDownloader.formatEta(state.etaSeconds)} · ${state.activeThreads}x"
             else -> "${UsbGadgetEngine.formatBytes(state.downloadedBytes)} · ${FastIsoDownloader.formatSpeed(state.speedBytesPerSec)}"
         }
-        builder.setContentTitle(title).setContentText(detail).setProgress(100, pct, state.totalBytes <= 0L)
-        if (state.supportsRange) {
+        builder.setContentTitle(title).setContentText(detail).setProgress(100, pct, isPostProcessing || state.totalBytes <= 0L)
+        if (state.supportsRange && !isPostProcessing) {
             val togglePending = PendingIntent.getBroadcast(context, 11, Intent(context, TurboDownloadActionReceiver::class.java).setAction(if (state.isPaused) ACTION_DL_RESUME else ACTION_DL_PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             builder.addAction(R.drawable.ic_usb, if (state.isPaused) "Resume" else "Pause", togglePending)
         }

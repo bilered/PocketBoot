@@ -590,7 +590,7 @@ object WindowsCustomizationEngine {
         sb.appendLine("if exist \"%PB_FLAG%\" exit /b 0")
         sb.appendLine("mkdir \"C:\\Windows\\Setup\\Scripts\" >nul 2>&1")
         sb.appendLine("echo [PocketBoot] Specialize configuration started...")
-        sb.appendLine("echo [PocketBoot v4.10.0] Specialize started %DATE% %TIME% >> \"%PB_LOG%\"")
+        sb.appendLine("echo [PocketBoot v4.11.0] Specialize started %DATE% %TIME% >> \"%PB_LOG%\"")
         sb.appendLine("set \"PB_BUILD=0\"")
         sb.appendLine("for /f \"tokens=3\" %%B in ('reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v CurrentBuildNumber 2^>nul ^| findstr /i CurrentBuildNumber') do set \"PB_BUILD=%%B\"")
 
@@ -870,7 +870,7 @@ object WindowsCustomizationEngine {
         // OEM BIOS-keyed laptop safeguard: register SetupComplete.cmd under FirstBoot\PostOobe
         sb.appendLine("if exist \"C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd\" reg add \"HKLM\\SYSTEM\\Setup\\FirstBoot\\PostOobe\" /v \"00\" /t REG_SZ /d \"cmd.exe /c C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd & exit /b 0\" /f >> \"%PB_LOG%\" 2>&1")
         sb.appendLine("echo done > \"%PB_FLAG%\"")
-        sb.appendLine("echo [PocketBoot v4.10.0] Specialize finished %DATE% %TIME% >> \"%PB_LOG%\"")
+        sb.appendLine("echo [PocketBoot v4.11.0] Specialize finished %DATE% %TIME% >> \"%PB_LOG%\"")
         sb.appendLine("exit /b 0")
         return sb.toString().replace("\r\n", "\n").replace("\n", "\r\n")
     }
@@ -922,7 +922,7 @@ object WindowsCustomizationEngine {
             }
         }
         sb.appendLine("if exist \"C:\\Windows\\Setup\\Custom\" rmdir /s /q \"C:\\Windows\\Setup\\Custom\" >nul 2>&1")
-        sb.appendLine("echo [PocketBoot v4.10.0] SetupComplete finished %DATE% %TIME% >> \"%PB_LOG%\"")
+        sb.appendLine("echo [PocketBoot v4.11.0] SetupComplete finished %DATE% %TIME% >> \"%PB_LOG%\"")
         sb.appendLine("start \"\" /b cmd /c \"ping -n 4 127.0.0.1 >nul & rmdir /s /q C:\\Windows\\Setup\\Scripts >nul 2>&1\"")
         sb.appendLine("exit /b 0")
         return sb.toString().replace("\r\n", "\n").replace("\n", "\r\n")
@@ -938,7 +938,7 @@ object WindowsCustomizationEngine {
         sb.appendLine("  exit /b 0")
         sb.appendLine(")")
         sb.appendLine("echo =======================================================")
-        sb.appendLine("echo   PocketBoot v4.10.0 - Revert Applied System Tweaks")
+        sb.appendLine("echo   PocketBoot v4.11.0 - Revert Applied System Tweaks")
         sb.appendLine("echo =======================================================")
         sb.appendLine("echo.")
         if (winUtil.disableConsumerFeatures || experience.disableSponsoredApps) {
@@ -1560,7 +1560,7 @@ fun WindowsTwoPaneCustomizer(
                                     OutlinedTextField(value = experience.localPassword, onValueChange = { onExperienceChange(experience.copy(localPassword = it.take(32))) }, label = { Text("Password (opt)") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PocketColors.accent, unfocusedBorderColor = PocketColors.border, focusedTextColor = PocketColors.textPrimary, unfocusedTextColor = PocketColors.textPrimary))
                                 }
                                 if (userInvalid) {
-                                    Text("Reserved or invalid Windows username (avoid Administrator, Guest, CON, NUL, or symbols).", fontSize = 10.5.sp, color = PocketColors.warning)
+                                    Text("Reserved or invalid Windows username (avoid Administrator, Guest, CON, NUL, or symbols).", fontSize = 11.sp, color = PocketColors.warning)
                                 }
                             }
                         }
@@ -1568,7 +1568,7 @@ fun WindowsTwoPaneCustomizer(
                         if (experience.skipOobe && experience.sanitizedLocalUsername.isEmpty()) {
                             Text(
                                 text = "Tip: Enable \"Create Local Admin Account\" above to skip account screens completely; otherwise OOBE will still ask for a username.",
-                                fontSize = 10.5.sp,
+                                fontSize = 11.sp,
                                 color = PocketColors.warning
                             )
                         }
@@ -1582,7 +1582,7 @@ fun WindowsTwoPaneCustomizer(
                                         Text("Custom Post-Install Script (Optional)", style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
                                         Text(if (experience.customPostInstallScriptPath.isNotBlank()) experience.customPostInstallScriptPath.substringAfterLast('/') else "Pick a .cmd, .bat, or .ps1 script to run after setup", fontSize = 11.sp, color = if (experience.customPostInstallScriptPath.isNotBlank()) PocketColors.accentSoft else PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
-                                    if (experience.customPostInstallScriptPath.isNotBlank()) { IconButton(onClick = { onExperienceChange(experience.copy(customPostInstallScriptPath = "")) }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.Close, "Clear script", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp)) } }
+                                    if (experience.customPostInstallScriptPath.isNotBlank()) { IconButton(onClick = { onExperienceChange(experience.copy(customPostInstallScriptPath = "")) }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.Close, "Clear script", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp)) } }
                                     else Icon(Icons.Rounded.ChevronRight, null, tint = PocketColors.textMuted, modifier = Modifier.size(17.dp))
                                 }
                             }
@@ -1709,7 +1709,7 @@ fun WindowsTwoPaneCustomizer(
                             1 -> scriptText
                             else -> undoText
                         }
-                        Text(content, style = PocketColors.monoStyle, fontSize = 10.sp, color = PocketColors.textSecondary, modifier = Modifier.padding(10.dp).verticalScroll(rememberScrollState()))
+                        Text(content, style = PocketColors.monoStyle, fontSize = 11.sp, color = PocketColors.textSecondary, modifier = Modifier.padding(10.dp).verticalScroll(rememberScrollState()))
                     }
                 }
             },
@@ -1724,7 +1724,7 @@ internal fun CustomSwitchRow(title: String, subtitle: String, checked: Boolean, 
         Row(modifier = Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(title, style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
-                Text(subtitle, fontSize = 10.5.sp, color = if (warningAccent && checked) PocketColors.warning else PocketColors.textSecondary)
+                Text(subtitle, fontSize = 11.sp, color = if (warningAccent && checked) PocketColors.warning else PocketColors.textSecondary)
             }
             Spacer(modifier = Modifier.width(8.dp))
             PocketSwitch(checked = checked, onCheckedChange = onChange, activeColor = if (warningAccent) PocketColors.warning else PocketColors.accent)

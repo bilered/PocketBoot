@@ -76,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.topjohnwu.superuser.Shell
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -191,7 +192,7 @@ object VentoyImageBuilder {
 
     private fun nowTs(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     private fun userVentoyDir(context: Context): File = File(context.filesDir, "ventoy")
 
@@ -272,7 +273,7 @@ object VentoyImageBuilder {
         val dlFile = File(context.cacheDir, "ventoy_release.tar.gz")
         val extractDir = File(context.cacheDir, "ventoy_extract")
 
-        return@withContext runCatching {
+        return@withContext try {
             onProgress(WindowsBuildProgress("Checking for updates...", "Querying latest Multi-Boot engine release", 0.08f, true))
 
             val apiUrl = URL(VENTOY_LATEST_API)
@@ -284,8 +285,12 @@ object VentoyImageBuilder {
                 setRequestProperty("Accept", "application/vnd.github+json")
             }
             val jsonText = try {
-                if (apiConn.responseCode !in 200..299) {
-                    return@withContext ActionResult(false, "GitHub API returned HTTP ${apiConn.responseCode}.", entries = entries)
+                val apiCode = apiConn.responseCode
+                if (!apiConn.url.protocol.equals("https", ignoreCase = true)) {
+                    return@withContext ActionResult(false, "Rejected non-HTTPS redirect from GitHub API.", entries = entries)
+                }
+                if (apiCode !in 200..299) {
+                    return@withContext ActionResult(false, "GitHub API returned HTTP $apiCode.", entries = entries)
                 }
                 apiConn.inputStream.bufferedReader().use { it.readText() }
             } finally {
@@ -308,10 +313,10 @@ object VentoyImageBuilder {
             if (downloadUrl.isBlank() || tag.isBlank()) {
                 return@withContext ActionResult(false, "Could not find Multi-Boot engine archive in latest release.", entries = entries)
             }
-            val parsedDlUrl = URL(downloadUrl)
-            if (!parsedDlUrl.protocol.equals("https", ignoreCase = true)) {
-                return@withContext ActionResult(false, "Refused non-HTTPS Multi-Boot engine download URL.", entries = entries)
+            if (!AppUpdateChecker.isTrustedReleaseUrl(downloadUrl)) {
+                return@withContext ActionResult(false, "Refused untrusted Multi-Boot engine download URL.", entries = entries)
             }
+            val parsedDlUrl = URL(downloadUrl)
 
             entries.add(LogEntry(ts, "multiboot-upd", "Found Multi-Boot engine v$tag ($assetName)"))
             onProgress(WindowsBuildProgress("Downloading Engine v$tag...", assetName, 0.15f, false))
@@ -322,11 +327,19 @@ object VentoyImageBuilder {
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "PocketBoot-Android")
             }
+            val maxArchiveBytes = 128L * 1024L * 1024L
             try {
-                if (dlConn.responseCode !in 200..299) {
-                    return@withContext ActionResult(false, "Download failed (HTTP ${dlConn.responseCode}).", entries = entries)
+                val dlCode = dlConn.responseCode
+                if (!dlConn.url.protocol.equals("https", ignoreCase = true)) {
+                    return@withContext ActionResult(false, "Refused insecure redirect while downloading Multi-Boot engine.", entries = entries)
+                }
+                if (dlCode !in 200..299) {
+                    return@withContext ActionResult(false, "Download failed (HTTP $dlCode).", entries = entries)
                 }
                 val totalLen = dlConn.contentLengthLong
+                if (totalLen > maxArchiveBytes) {
+                    return@withContext ActionResult(false, "Multi-Boot engine archive exceeds 128 MB safety limit.", entries = entries)
+                }
                 var downloaded = 0L
                 dlFile.delete()
                 dlConn.inputStream.use { input ->
@@ -335,8 +348,11 @@ object VentoyImageBuilder {
                         while (true) {
                             val r = input.read(buf)
                             if (r <= 0) break
-                            output.write(buf, 0, r)
                             downloaded += r
+                            if (downloaded > maxArchiveBytes) {
+                                throw IllegalStateException("Archive exceeded 128 MB safety limit")
+                            }
+                            output.write(buf, 0, r)
                             if (totalLen > 0L) {
                                 val pct = 0.15f + (downloaded.toFloat() / totalLen.toFloat()) * 0.65f
                                 onProgress(
@@ -350,6 +366,10 @@ object VentoyImageBuilder {
                             }
                         }
                     }
+                }
+                if (downloaded <= 0L || (totalLen > 0L && downloaded != totalLen)) {
+                    dlFile.delete()
+                    return@withContext ActionResult(false, "Downloaded archive was truncated ($downloaded / $totalLen bytes).", entries = entries)
                 }
             } finally {
                 dlConn.disconnect()
@@ -369,29 +389,63 @@ object VentoyImageBuilder {
             } else {
                 "tar -xzf $qTar -C $qExt 2>&1"
             }
-            Shell.cmd(extCmd).exec()
+            val extRes = Shell.cmd(extCmd).exec()
+            if (!extRes.isSuccess) {
+                return@withContext ActionResult(false, "Could not extract downloaded Multi-Boot engine archive.", entries = entries)
+            }
+            val canonicalRoot = extractDir.canonicalPath.trimEnd(File.separatorChar) + File.separator
+            fun safeExtractedFile(targetName: String): File? = extractDir.walkTopDown().firstOrNull { f ->
+                f.isFile && f.name == targetName &&
+                    runCatching { f.canonicalPath.startsWith(canonicalRoot) }.getOrDefault(false)
+            }
 
-            val foundBoot = extractDir.walkTopDown().firstOrNull { it.isFile && it.name == "boot.img" }
-            val foundCore = extractDir.walkTopDown().firstOrNull { it.isFile && it.name == "core.img.xz" }
-            val foundDisk = extractDir.walkTopDown().firstOrNull { it.isFile && it.name == "ventoy.disk.img.xz" }
+            val foundBoot = safeExtractedFile("boot.img")
+            val foundCore = safeExtractedFile("core.img.xz")
+            val foundDisk = safeExtractedFile("ventoy.disk.img.xz")
 
             if (foundBoot == null || foundCore == null || foundDisk == null || foundDisk.length() < 100_000L) {
                 return@withContext ActionResult(false, "Downloaded archive did not contain expected boot engine files.", entries = entries)
             }
 
             val targetDir = userVentoyDir(context).apply { mkdirs() }
-            foundBoot.copyTo(File(targetDir, "boot.img"), overwrite = true)
-            foundCore.copyTo(File(targetDir, "core.img.xz"), overwrite = true)
-            foundDisk.copyTo(File(targetDir, "ventoy.disk.img.xz"), overwrite = true)
-            File(targetDir, "version.txt").writeText(tag)
+            val stagedFiles = listOf(
+                foundBoot to "boot.img",
+                foundCore to "core.img.xz",
+                foundDisk to "ventoy.disk.img.xz"
+            )
+            val tmpCopies = mutableListOf<Pair<File, File>>()
+            for ((srcF, leaf) in stagedFiles) {
+                val tmpDst = File(targetDir, "$leaf.tmp")
+                srcF.copyTo(tmpDst, overwrite = true)
+                if (tmpDst.length() != srcF.length()) {
+                    tmpDst.delete()
+                    tmpCopies.forEach { it.first.delete() }
+                    return@withContext ActionResult(false, "Failed to stage $leaf cleanly.", entries = entries)
+                }
+                tmpCopies.add(tmpDst to File(targetDir, leaf))
+            }
+            for ((tmpDst, finalDst) in tmpCopies) {
+                if (!tmpDst.renameTo(finalDst)) {
+                    tmpDst.copyTo(finalDst, overwrite = true)
+                    tmpDst.delete()
+                }
+            }
+            val tmpVer = File(targetDir, "version.txt.tmp").apply { writeText(tag, Charsets.UTF_8) }
+            val finalVer = File(targetDir, "version.txt")
+            if (!tmpVer.renameTo(finalVer)) {
+                finalVer.writeText(tag, Charsets.UTF_8)
+                tmpVer.delete()
+            }
 
             onProgress(WindowsBuildProgress("Updated to Engine v$tag!", "Ready for offline multi-boot builds", 1f, false))
             entries.add(LogEntry(ts, "multiboot-upd", "Installed Multi-Boot engine v$tag in app storage"))
             ActionResult(true, "Updated Multi-Boot engine to v$tag.", entries = entries)
-        }.getOrElse { e ->
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             entries.add(LogEntry(ts, "multiboot-upd", "Update error: ${e.message}", true))
             ActionResult(false, "Multi-Boot engine update failed: ${e.message ?: "Network error"}", entries = entries)
-        }.also {
+        } finally {
             dlFile.delete()
             extractDir.deleteRecursively()
         }
@@ -748,12 +802,12 @@ object VentoyImageBuilder {
                 )
             """.trimIndent()).exec()
             if (!res.isSuccess) {
-                Shell.cmd("rm -f $dstZip 2>/dev/null || true").exec()
+                Shell.cmd("rm -f ${shellQuote(dstZip)} 2>/dev/null || true").exec()
             }
             res.isSuccess
         } finally {
             tmpBat.delete()
-            Shell.cmd("rm -rf $stageDir $tmpZip 2>/dev/null || true").exec()
+            Shell.cmd("rm -rf ${shellQuote(stageDir)} ${shellQuote(tmpZip)} 2>/dev/null || true").exec()
         }
     }
 
@@ -896,7 +950,7 @@ object VentoyImageBuilder {
                         writeText(WindowsCustomizationEngine.generateVentoySelfContainedXml(effExp, pWu, arch), Charsets.UTF_8)
                     }
                     try {
-                        Shell.cmd("mkdir -p $TEMP_VENTOY_MNT/ventoy/scripts && cp -f ${shellQuote(tmpXml.absolutePath)} $TEMP_VENTOY_MNT/ventoy/scripts/$fileName").exec()
+                        Shell.cmd("mkdir -p ${shellQuote("$TEMP_VENTOY_MNT/ventoy/scripts")} && cp -f ${shellQuote(tmpXml.absolutePath)} ${shellQuote("$TEMP_VENTOY_MNT/ventoy/scripts/$fileName")}").exec()
                     } finally {
                         tmpXml.delete()
                     }
@@ -2180,7 +2234,7 @@ object VentoyImageBuilder {
         val newMnt = "$workDir/new_mnt"
         var oldLoop = ""
         var newLoop = ""
-        return@withContext runCatching {
+        return@withContext try {
             val fsChoice = if (isNtfs) VentoyFilesystem.NTFS else VentoyFilesystem.EXFAT
             onProgress(WindowsBuildProgress("Creating $newSizeGb GB container...", "Safe non-destructive rebuild", 0.15f, false))
             val existingLabel = run {
@@ -2287,9 +2341,11 @@ object VentoyImageBuilder {
             IsoInspector.invalidate(resolvedImg)
             onProgress(WindowsBuildProgress("Done!", "Expanded to $newSizeGb GB", 1f, false))
             ActionResult(true, "Expanded ${resolvedImg.substringAfterLast('/')} to $newSizeGb GB (all ISOs preserved).")
-        }.getOrElse { e ->
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             ActionResult(false, "Resize failed: ${e.message ?: "Unexpected error"}")
-        }.also {
+        } finally {
             val remMounts = buildList {
                 if (oldLoop.isNotEmpty()) add(oldMnt)
                 if (newLoop.isNotEmpty()) add(newMnt)
@@ -2595,13 +2651,13 @@ fun VentoyBuilderSheet(
                     if (!isExfatSelected && volumeLabel.trim().length > IsoInspector.EXPLORER_SINGLE_LINE_SAFE_MAX) {
                         Text(
                             text = "Over ${IsoInspector.EXPLORER_SINGLE_LINE_SAFE_MAX} chars may wrap in Windows Explorer Tiles view and hide free/total space.",
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             color = PocketColors.warning
                         )
                     } else if (filesystem == VentoyFilesystem.AUTO && volumeLabel.trim().length > 11) {
                         Text(
                             text = "Auto Select uses exFAT when supported (clamps label to 11 chars) or full label on NTFS.",
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             color = PocketColors.textSecondary
                         )
                     }
@@ -2894,7 +2950,7 @@ fun VentoyBuilderSheet(
                             Text("Inject Windows Drivers Folder (Optional)", style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
                             Text(if (driversDir.isNotBlank()) driversDir.replace("/data/media/0", "/sdcard") else "Auto-loads .inf storage/Wi-Fi drivers automatically in WinPE", fontSize = 11.sp, color = if (driversDir.isNotBlank()) PocketColors.accentSoft else PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (driversDir.isNotBlank()) { IconButton(onClick = { driversDir = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.Close, "Clear", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp)) } }
+                        if (driversDir.isNotBlank()) { IconButton(onClick = { driversDir = "" }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.Close, "Clear", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp)) } }
                         else Text("Browse", style = MaterialTheme.typography.labelSmall, color = PocketColors.accentSoft)
                     }
                 }
@@ -3485,7 +3541,7 @@ fun VentoyManagerSheet(
                                     }
                                     IconButton(
                                         onClick = { aliasEditTarget = item },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(44.dp)
                                     ) {
                                         Icon(Icons.Rounded.Edit, "Boot menu alias", tint = PocketColors.textSecondary, modifier = Modifier.size(16.dp))
                                     }
@@ -3500,7 +3556,7 @@ fun VentoyManagerSheet(
                                                 reloadContents()
                                             }
                                         },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(44.dp)
                                     ) {
                                         Icon(Icons.Rounded.DeleteOutline, "Remove", tint = PocketColors.danger, modifier = Modifier.size(18.dp))
                                     }
@@ -3698,7 +3754,7 @@ fun VentoyManagerSheet(
                                 Text(when { mgrDriversDir.isNotBlank() -> mgrDriversDir.replace("/data/media/0", "/sdcard"); c.hasDriversZip -> "Active (Driver archive ready) · Tap to replace"; else -> "Tap to browse folder" }, fontSize = 11.sp, color = PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             if (mgrDriversDir.isNotBlank()) {
-                                IconButton(onClick = { mgrDriversDir = "" }, modifier = Modifier.size(28.dp)) {
+                                IconButton(onClick = { mgrDriversDir = "" }, modifier = Modifier.size(44.dp)) {
                                     Icon(Icons.Rounded.Close, "Clear selected folder", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp))
                                 }
                             } else if (c.hasDriversZip) {

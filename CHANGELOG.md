@@ -1,3 +1,34 @@
+## v4.11.0 (2026-11-28) — Wave 7: Production-Readiness Security, USB Safety, UI/UX Accessibility, Lifecycle & CI Hardening
+- **Critical Build, Concurrency & Runtime Fixes (`UsbBuildService.kt`, `UsbKeepAliveService.kt`, `FastIsoDownloader.kt`, `OtgUsbFlasher.kt`):**
+  - Fixed `UsbBuildService.onTimeout()` to call `UsbBuildManager.cancelActiveBuild(this)` and sequenced child-process termination ahead of coroutine job cancellation.
+  - Hardened `UsbKeepAliveService` `START_STICKY` null-intent restarts to restore persisted `keepAdbActive` from `AppPrefs` and live mounted LUN status from `UsbGadgetEngine.getStatus()`.
+  - Upgraded `FastIsoDownloader.chunkCursors` to `AtomicLongArray` and made `.pbmeta` sidecar persistence atomic via sibling `.tmp` + `renameTo` (`writeSidecarAtomically`).
+  - Verified `sync` + `blockdev --flushbufs` exit codes before reporting `"Safe to unplug"` in `OtgUsbFlasher`, and displayed kernel `major:minor` + logical sector size (`512 B`) in the typed `FLASH` confirmation dialog.
+- **UI/UX Excellence, WCAG 2.1 AA Accessibility & Compose Performance (`Theme.kt`, `MainActivity.kt`, `DownloadScreen.kt`, `SystemTweaksScreen.kt`, `SettingsScreen.kt` + 6 sheets):**
+  - Recalibrated `SurfaceMode.LIGHT`, `DARK`, and `AMOLED` semantic palette tokens so all text/status pairs exceed **WCAG 2.1 AA (`>= 4.5:1`)** (guarded by a new JUnit contrast-ratio test).
+  - Upgraded `Modifier.bounceClick` with `LocalIndication.current` ripple/focus indication and `Role.Button` semantics, added reusable `PocketStatusBadge` and `PocketBanner` primitives, removed all 9 decorative gradients and both raw `⚡` emojis, raised all undersized interactive `IconButton`s to `44.dp`, and lifted all sub-`11.sp` text to `>= 11.sp`.
+  - Migrated `DownloadScreen` and `SystemTweaksScreen` to keyed `LazyColumn`s, persisted primary navigation/filter/search state with `rememberSaveable`, and added `BackHandler` navigation back to Home.
+- **CI Reproducibility (`.github/workflows/build-apk.yml`):**
+  - Pinned official Ventoy asset bundling to immutable `v1.1.18` (replacing floating `releases/latest`).
+- **Centralized Root-Shell & URL Security (`ShellSafety.kt`):**
+  - Consolidated all 12 duplicated `shellQuote()` implementations into pure-JVM testable `ShellSafety.shellQuote()` alongside strict path-containment (`isCleanAbsolutePath`, `isStrictChildPath`), exact/dot-bounded host validation (`isHostOrSubdomain`), URL validation (`isValidHttpUrl`), and trusted-host HTTPS-to-HTTP redirect downgrade blocking (`isForbiddenHttpsDowngrade`).
+- **10-Layer Physical OTG Identity Lock (`OtgUsbFlasher.kt`):**
+  - Captured kernel `major:minor` (`/sys/block/<dev>/dev`) during OTG scanning and upgraded pre-wipe revalidation (`matchesVerifiedOtgTarget`) to require exact match across `devName`, canonical `sysfsRealPath`, `devMajorMinor`, `logicalBlockSize == 512`, writable state, exact `sizeBytes`, `vendor`, and `model` so hot-swapping another USB drive into the same port fails closed.
+- **Root Shell & Archive Safety (`DriverPackManager.kt`, `UsbGadgetEngine.kt`, `VentoyImageBuilder.kt`, `FastIsoDownloader.kt`):**
+  - Stripped symlinks after `7zzs` driver-pack extraction, enforced a `2 GiB` extracted driver-pack cap and non-dereferencing copy (`cp -rPf`), and guarded `deletePack()` with `ShellSafety.isStrictChildPath()`.
+  - Quoted all 11 ConfigFS/UDC/LUN paths in `UsbGadgetEngine.getStatus()`.
+  - Verified tarball extraction exit status and canonical path containment in `VentoyImageBuilder.downloadAndInstallVentoyEngine()`, and quoted remaining shell variables.
+  - Added a `32 GiB` streaming cap to `FastIsoDownloader.extractImageFromZipArchive()`, verified extracted destination byte count **before** deleting source `.zip`, and blocked HTTPS-to-HTTP redirect downgrades from trusted catalog hosts.
+- **Backup, Updater & Android 14/15 Lifecycle Hardening (`AppPrefs.kt`, `AppUpdateChecker.kt`, `UsbBuildService.kt`, `UsbKeepAliveService.kt`, `FastIsoDownloader.kt`):**
+  - Added `2 MiB` backup JSON cap and path/URL scheme sanitization in `AppPrefs.importBackupJson()`.
+  - Enforced post-redirect HTTPS and strict `github.com`/`githubusercontent.com` host allowlisting in `AppUpdateChecker`.
+  - Replaced unbounded `wakeLock.acquire()` calls with bounded timeouts (`2h` builds/downloads, `6h` keep-alive) and added Android 15 `onTimeout(startId, fgsType)` handlers to `UsbBuildService` and `UsbKeepAliveService`.
+- **UI Design-System Polish, ProGuard & CI Hardening (`Theme.kt`, `MainActivity.kt`, `SettingsScreen.kt`, `app/proguard-rules.pro`, `app/build.gradle.kts`, `.github/workflows/build-apk.yml`):**
+  - Replaced the last 2 hardcoded `Color(0xFF09090B)` literals outside `Theme.kt` with semantic `PocketColors.onBrightSurface`.
+  - Added `app/proguard-rules.pro` preserving `@JavascriptInterface` bridges and `libsu`, configured `lint` in `app/build.gradle.kts`, added least-privilege `permissions: contents: read`, enforced `test -x` on **all 10** static ARM64 binaries + `test -s` on boot assets, added `lintDebug` and APK SHA-256 logging in CI.
+- **Wave 7 JVM Unit Tests (`Wave7ProductionReadinessTest.kt`):**
+  - Added 10th JUnit suite covering `ShellSafety`, `DriverPackManager.isSafeChildOfLibrary`, `OtgUsbFlasher.matchesVerifiedOtgTarget`, `AppPrefs.importBackupJson` adversarial input rejection, and `AppUpdateChecker.isTrustedReleaseUrl`.
+
 ## v4.10.0 (2026-11-27) — Wave 6: NTriver Direct Windows Archive & Downloader Hardening
 - **NTriver Direct Windows Archive Engine (`NtriverCatalog.kt`):**
   - Dynamically discovers OS routes from `https://ntriver.org/download-windows-office` (with verified fallback slugs), parses rendered Docusaurus HTML tables, and automatically falls back to raw GitHub Markdown (`ntriver-org/ntriver-org-site` via dynamic tree lookup) if Cloudflare blocks plain HTTP.

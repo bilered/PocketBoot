@@ -292,7 +292,7 @@ class AppPrefs(context: Context) {
                     val name = o.optString("name", "").trim()
                     val l0 = o.optString("lun0Path", "").trim()
                     val l1 = o.optString("lun1Path", "").trim()
-                    if (name.isNotEmpty() && l0.isNotEmpty() && l1.isNotEmpty()) {
+                    if (name.isNotEmpty() && ShellSafety.isCleanAbsolutePath(l0) && ShellSafety.isCleanAbsolutePath(l1)) {
                         val id = o.optString("id", "").trim().ifBlank { "combo_${i}_${name.hashCode()}" }
                         val m0 = o.optString("lun0Mode", MountMode.AUTO.name).trim().ifBlank { MountMode.AUTO.name }
                         val m1 = o.optString("lun1Mode", MountMode.USB_RW.name).trim().ifBlank { MountMode.USB_RW.name }
@@ -357,20 +357,56 @@ class AppPrefs(context: Context) {
                 put("systemTweaksPresets", tweaksPresetsArr)
                 put("systemTweaksSearchHistory", JSONArray(settings.systemTweaksSearchHistory.take(AppSettings.MAX_TWEAKS_SEARCH_HISTORY)))
                 put("dualLunCombos", encodeDualLunCombosJson(settings.dualLunCombos))
+                put("pinnedFiles", JSONArray(settings.pinnedFiles.toList()))
+                put("hiddenFiles", JSONArray(settings.hiddenFiles.toList()))
             }.toString(2)
         }
 
         fun importBackupJson(rawJson: String, current: AppSettings): AppSettings? = runCatching {
+            if (rawJson.length > 2 * 1024 * 1024) return null
             val obj = JSONObject(rawJson)
             if (!obj.has("pocketbootBackupVersion")) return null
-            val defDir = obj.optString("defaultDir", current.defaultDir).ifBlank { current.defaultDir }
+            val rawDefDir = obj.optString("defaultDir", current.defaultDir).trim()
+            val defDir = if (rawDefDir.isNotBlank() && ShellSafety.isCleanAbsolutePath(rawDefDir)) rawDefDir else current.defaultDir
             val parsedDirs = mutableListOf<String>()
-            obj.optJSONArray("scanDirs")?.let { a -> for (i in 0 until a.length()) a.optString(i, "").trim().takeIf { it.isNotEmpty() }?.let { parsedDirs.add(it) } }
+            obj.optJSONArray("scanDirs")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val d = a.optString(i, "").trim()
+                    if (d.isNotEmpty() && ShellSafety.isCleanAbsolutePath(d)) parsedDirs.add(d)
+                }
+            }
             val scanDirs = (listOf(defDir) + parsedDirs.filter { it != defDir }).distinct()
             val parsedRepos = mutableListOf<String>()
-            obj.optJSONArray("customRepoUrls")?.let { a -> for (i in 0 until a.length()) a.optString(i, "").trim().takeIf { it.isNotEmpty() }?.let { parsedRepos.add(it) } }
+            obj.optJSONArray("customRepoUrls")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val u = a.optString(i, "").trim()
+                    if (ShellSafety.isValidHttpUrl(u)) parsedRepos.add(u)
+                }
+            }
             val modesMap = mutableMapOf<String, String>()
-            obj.optJSONObject("fileModes")?.let { m -> val keys = m.keys(); while (keys.hasNext()) { val k = keys.next(); val v = m.optString(k, "").trim(); if (k.isNotBlank() && v.isNotBlank()) modesMap[k] = v } }
+            obj.optJSONObject("fileModes")?.let { m ->
+                val keys = m.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next().trim()
+                    val v = m.optString(k, "").trim()
+                    if (k.isNotBlank() && ShellSafety.isCleanAbsolutePath(k) && v.isNotBlank()) modesMap[k] = v
+                }
+            }
+            fun parseCleanPathSet(key: String, fallback: Set<String>): Set<String> {
+                if (!obj.has(key)) return fallback
+                val out = linkedSetOf<String>()
+                obj.optJSONArray(key)?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val p = arr.optString(i, "").trim()
+                        if (p.isNotEmpty() && ShellSafety.isCleanAbsolutePath(p)) out.add(p)
+                    }
+                }
+                return out
+            }
+            val rawTargetMb = obj.optString("downloadTargetMultiBootPath", current.downloadTargetMultiBootPath).trim()
+            val safeTargetMb = if (rawTargetMb.isEmpty() || ShellSafety.isCleanAbsolutePath(rawTargetMb)) rawTargetMb else current.downloadTargetMultiBootPath
+            val rawFavMount = obj.optString("favoriteQuickMountPath", current.favoriteQuickMountPath).trim()
+            val safeFavMount = if (rawFavMount.isEmpty() || ShellSafety.isCleanAbsolutePath(rawFavMount)) rawFavMount else current.favoriteQuickMountPath
             val presets = mutableListOf<AutounattendPreset>()
             obj.optJSONArray("autounattendPresets")?.let { arr ->
                 for (i in 0 until arr.length()) {
@@ -404,8 +440,8 @@ class AppPrefs(context: Context) {
             current.copy(
                 hasCompletedSetup = true,
                 defaultDir = defDir,
-                downloadTargetMultiBootPath = obj.optString("downloadTargetMultiBootPath", current.downloadTargetMultiBootPath),
-                favoriteQuickMountPath = obj.optString("favoriteQuickMountPath", current.favoriteQuickMountPath),
+                downloadTargetMultiBootPath = safeTargetMb,
+                favoriteQuickMountPath = safeFavMount,
                 keepAdbActive = obj.optBoolean("keepAdbActive", current.keepAdbActive),
                 autoPatchSelinux = obj.optBoolean("autoPatchSelinux", current.autoPatchSelinux),
                 surfaceMode = surfMode,
@@ -423,7 +459,9 @@ class AppPrefs(context: Context) {
                 autounattendPresets = presets,
                 systemTweaksPresets = if (obj.has("systemTweaksPresets")) tweaksPresets else current.systemTweaksPresets,
                 systemTweaksSearchHistory = if (obj.has("systemTweaksSearchHistory")) parsedHistory.take(AppSettings.MAX_TWEAKS_SEARCH_HISTORY) else current.systemTweaksSearchHistory,
-                dualLunCombos = if (obj.has("dualLunCombos")) parseDualLunCombosJson(obj.optJSONArray("dualLunCombos")?.toString().orEmpty()) else current.dualLunCombos
+                dualLunCombos = if (obj.has("dualLunCombos")) parseDualLunCombosJson(obj.optJSONArray("dualLunCombos")?.toString().orEmpty()) else current.dualLunCombos,
+                pinnedFiles = parseCleanPathSet("pinnedFiles", current.pinnedFiles),
+                hiddenFiles = parseCleanPathSet("hiddenFiles", current.hiddenFiles)
             )
         }.getOrNull()
     }

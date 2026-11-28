@@ -35,6 +35,13 @@ object AppUpdateChecker {
      * Returns > 0 if [remoteVersion] is newer than [currentVersion], 0 if equal, < 0 if older.
      * Pre-release tags (e.g. "4.7.0-rc1") sort below the corresponding stable release ("4.7.0").
      */
+    internal fun isTrustedReleaseUrl(rawUrl: String): Boolean {
+        if (!ShellSafety.isValidHttpUrl(rawUrl, requireHttps = true)) return false
+        val host = runCatching { URL(rawUrl.trim()).host.orEmpty() }.getOrDefault("")
+        return ShellSafety.isHostOrSubdomain(host, "github.com") ||
+            ShellSafety.isHostOrSubdomain(host, "githubusercontent.com")
+    }
+
     fun compareSemVer(remoteVersion: String, currentVersion: String): Int {
         fun parse(raw: String): Pair<List<Int>, String> {
             val cleaned = raw.trim().removePrefix("v").removePrefix("V")
@@ -75,6 +82,7 @@ object AppUpdateChecker {
             }
             val (code, body) = try {
                 val c = conn.responseCode
+                require(conn.url.protocol.equals("https", ignoreCase = true)) { "Rejected redirect to non-HTTPS URL." }
                 val stream = if (c in 200..299) conn.inputStream else conn.errorStream
                 c to stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             } finally {
@@ -117,7 +125,7 @@ object AppUpdateChecker {
             val title = obj.optString("name", "").trim().ifBlank { "PocketBoot $tag" }
             val notes = obj.optString("body", "").trim()
             val htmlUrl = obj.optString("html_url", "").trim()
-                .takeIf { it.startsWith("https://", ignoreCase = true) }
+                .takeIf { isTrustedReleaseUrl(it) }
                 ?: RELEASES_PAGE_URL
             val published = obj.optString("published_at", "").trim().substringBefore('T')
 
@@ -127,7 +135,7 @@ object AppUpdateChecker {
                 val asset = assets.optJSONObject(i) ?: continue
                 val name = asset.optString("name", "")
                 val dl = asset.optString("browser_download_url", "").trim()
-                if (name.endsWith(".apk", ignoreCase = true) && dl.startsWith("https://", ignoreCase = true)) {
+                if (name.endsWith(".apk", ignoreCase = true) && isTrustedReleaseUrl(dl)) {
                     apkUrl = dl
                     break
                 }

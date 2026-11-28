@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -185,17 +188,13 @@ jobs:
             fi
           ) || echo "::warning::Could not bundle static mkfs.fat"
 
-          # 6. Bundle official Ventoy boot files (~10 MB) inside app/src/main/assets/ventoy/
+          # 6. Bundle pinned official Ventoy boot files (~10 MB) inside app/src/main/assets/ventoy/
           (
             set -e
             mkdir -p app/src/main/assets/ventoy /tmp/ventoy-dl
-            VTAG=$(curl -fsSL -H "User-Agent: PocketBoot-CI" "https://api.github.com/repos/ventoy/Ventoy/releases/latest" | grep -oE '"tag_name":[[:space:]]*"v[^"]+"' | head -n 1 | sed -E 's/.*"v([^"]+)".*/\1/' || true)
-            [ -z "$VTAG" ] && VTAG="1.1.18"
-            echo "Bundling official Ventoy v${VTAG}..."
-            curl -fSL "https://github.com/ventoy/Ventoy/releases/download/v${VTAG}/ventoy-${VTAG}-linux.tar.gz" -o /tmp/ventoy-dl/ventoy.tar.gz || {
-              VTAG="1.1.18"
-              curl -fSL "https://github.com/ventoy/Ventoy/releases/download/v1.1.18/ventoy-1.1.18-linux.tar.gz" -o /tmp/ventoy-dl/ventoy.tar.gz
-            }
+            VTAG="1.1.18"
+            echo "Bundling pinned official Ventoy v${VTAG}..."
+            curl -fSL "https://github.com/ventoy/Ventoy/releases/download/v${VTAG}/ventoy-${VTAG}-linux.tar.gz" -o /tmp/ventoy-dl/ventoy.tar.gz
             tar -xzf /tmp/ventoy-dl/ventoy.tar.gz -C /tmp/ventoy-dl
             VDIR=$(find /tmp/ventoy-dl -mindepth 1 -maxdepth 1 -type d -name 'ventoy-*' | head -n 1)
             cp "$VDIR/boot/boot.img" app/src/main/assets/ventoy/boot.img
@@ -294,14 +293,26 @@ jobs:
             fi
           ) || echo "::warning::Could not bundle static zstd"
 
-          # 9. Verify bundled static ARM64 binaries are present and executable
-          test -x "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/lib7zzs.so"
-          test -x "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libwimlib_imagex.so"
-          test -x "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libchntpw.so"
-          test -x "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libzstd.so"
+          # 9. Verify ALL 10 bundled static ARM64 binaries and critical boot assets are present and valid
+          for bin in \
+            lib7zzs.so \
+            libmkfs_ntfs.so \
+            libntfs_3g.so \
+            libntfsresize.so \
+            libms_sys.so \
+            libmkfs_exfat.so \
+            libmkfs_fat.so \
+            libwimlib_imagex.so \
+            libchntpw.so \
+            libzstd.so; do
+            test -x "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/$bin"
+          done
+          test -s "$GITHUB_WORKSPACE/app/src/main/assets/uefi-ntfs.img"
+          test -s "$GITHUB_WORKSPACE/app/src/main/assets/ventoy/ventoy.disk.img.xz"
 
           ls -lh app/src/main/assets/uefi-ntfs.img app/src/main/jniLibs/arm64-v8a/
           file app/src/main/jniLibs/arm64-v8a/*.so
+          sha256sum app/src/main/jniLibs/arm64-v8a/*.so app/src/main/assets/uefi-ntfs.img
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -311,8 +322,14 @@ jobs:
       - name: Run JVM Unit Tests
         run: gradle testDebugUnitTest --stacktrace
 
+      - name: Run Android Lint (Debug)
+        run: gradle lintDebug --stacktrace
+
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
+
+      - name: Record Debug APK SHA-256
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -98,7 +98,7 @@ object LinuxImageBuilder {
     private const val FAT32_MAX_FILE_BYTES = 4_294_967_295L
 
     private fun nowTs(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     suspend fun inspectMaxFileBytesInIso(context: Context, isoPath: String): Long = withContext(Dispatchers.IO) {
         val bundled7z = WindowsImageBuilder.findBundledBinary(context, "lib7zzs.so", listOf("7zz", "7z")) ?: return@withContext 0L
@@ -297,7 +297,11 @@ object LinuxImageBuilder {
                     val patched = DiskPartitioner.appendLinuxPersistenceMbr(origMbr, persistOffsetBytes / 512L, persistBytes / 512L)
                     if (patched == null || persistSlotNum < 2) { cleanup(true); return@withContext ActionResult(false, "Could not append persistence partition (try Extracted FAT32 mode).", entries = entries) }
                     tmpOut.writeBytes(patched)
-                    Shell.cmd("dd if=${shellQuote(tmpOut.absolutePath)} of=$qOut bs=512 count=1 conv=notrunc 2>/dev/null").exec()
+                    val writeMbrOk = Shell.cmd("dd if=${shellQuote(tmpOut.absolutePath)} of=$qOut bs=512 count=1 conv=notrunc 2>&1").exec().isSuccess
+                    if (!writeMbrOk) {
+                        cleanup(true)
+                        return@withContext ActionResult(false, "Failed to write updated MBR partition table.", entries = entries)
+                    }
                 } finally { tmpIn.delete(); tmpOut.delete() }
                 onProgress(WindowsBuildProgress("Formatting ext4 persistence...", "Label: ${config.style.volumeLabel}", 0.74f, false))
                 val otgForPersist = verifiedOtg
@@ -427,7 +431,13 @@ object LinuxImageBuilder {
                 includePersistence = withPersistence
             )
             val tmpMbr = File(context.cacheDir, "pb_fat_mbr.bin").apply { writeBytes(mbrBytes) }
-            try { Shell.cmd("dd if=${shellQuote(tmpMbr.absolutePath)} of=$qOut bs=512 count=1 conv=notrunc 2>/dev/null").exec() } finally { tmpMbr.delete() }
+            val mbrWriteOk = try {
+                Shell.cmd("dd if=${shellQuote(tmpMbr.absolutePath)} of=$qOut bs=512 count=1 conv=notrunc 2>&1").exec().isSuccess
+            } finally { tmpMbr.delete() }
+            if (!mbrWriteOk) {
+                cleanup(true)
+                return@withContext ActionResult(false, "Failed to write MBR partition table to target.", entries = entries)
+            }
             WindowsImageBuilder.findBundledBinary(context, "libms_sys.so", listOf("ms-sys"))?.let { msSys -> Shell.cmd("${shellQuote(msSys)} -s -f $qOut >/dev/null 2>&1 || ${shellQuote(msSys)} -7 -f $qOut >/dev/null 2>&1 || true").exec() }
 
             val fatLabel = if (config.volumeLabel.isNotBlank()) {
@@ -696,7 +706,7 @@ fun LinuxBuilderSheet(
                             Surface(modifier = Modifier.weight(1f).bounceClick { usbMode = mode }, shape = RoundedCornerShape(12.dp), color = if (selected) PocketColors.accentBg else PocketColors.surfaceInput, border = BorderStroke(if (selected) 1.5.dp else 0.75.dp, if (selected) PocketColors.accent else PocketColors.border)) {
                                 Column(modifier = Modifier.padding(11.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(mode.title, style = MaterialTheme.typography.labelLarge, color = if (selected) PocketColors.accentSoft else PocketColors.textPrimary)
-                                    Text(mode.subtitle, fontSize = 10.5.sp, color = PocketColors.textSecondary)
+                                    Text(mode.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary)
                                 }
                             }
                         }
@@ -710,7 +720,7 @@ fun LinuxBuilderSheet(
                             Surface(modifier = Modifier.weight(1f).bounceClick(enabled = !blocked) { writeMethod = m }, shape = RoundedCornerShape(12.dp), color = if (selected) PocketColors.surfaceSubtle else PocketColors.surfaceInput, border = BorderStroke(if (selected) 1.dp else 0.5.dp, if (selected) PocketColors.accent else PocketColors.border)) {
                                 Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(m.title, style = MaterialTheme.typography.labelMedium, color = if (blocked) PocketColors.textMuted else PocketColors.textPrimary)
-                                    Text(if (blocked) "Blocked (>4 GB file in ISO)" else m.subtitle, fontSize = 10.sp, color = PocketColors.textSecondary)
+                                    Text(if (blocked) "Blocked (>4 GB file in ISO)" else m.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary)
                                 }
                             }
                         }
@@ -726,7 +736,7 @@ fun LinuxBuilderSheet(
                                     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(s.title, style = MaterialTheme.typography.labelMedium, color = if (selected) PocketColors.accentSoft else PocketColors.textPrimary)
-                                            Text(s.subtitle, fontSize = 10.5.sp, color = PocketColors.textSecondary)
+                                            Text(s.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary)
                                         }
                                         Text(s.volumeLabel, style = PocketColors.monoStyle, color = PocketColors.accentSoft)
                                     }

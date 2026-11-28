@@ -13,6 +13,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -127,11 +128,11 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -214,7 +215,8 @@ fun PocketBootApp(shortcutRequest: Pair<String, Int>? = null) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var activeTab by remember { mutableStateOf(NavTab.HOME) }
+    var activeTab by rememberSaveable { mutableStateOf(NavTab.HOME) }
+    BackHandler(enabled = activeTab != NavTab.HOME) { activeTab = NavTab.HOME }
     var settings by remember { mutableStateOf(prefs.load()) }
     var status by remember { mutableStateOf(GadgetStatus()) }
     var images by remember { mutableStateOf<List<ImageFile>>(emptyList()) }
@@ -1723,7 +1725,7 @@ private fun MountProtocolSheet(
                                 )
                                 Text(
                                     text = if (occupied) "In use" else "Free",
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     color = if (occupied) PocketColors.warning else PocketColors.textMuted
                                 )
                             }
@@ -1907,7 +1909,7 @@ private fun MountProtocolSheet(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Remember mode for 1-tap mount", style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
-                        Text("Next time, tap ⚡ Mount on Drives to mount instantly", fontSize = 11.sp, color = PocketColors.textSecondary)
+                        Text("Next time, tap Mount on Drives to mount instantly", fontSize = 11.sp, color = PocketColors.textSecondary)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     PocketSwitch(checked = rememberForQuickMount, onCheckedChange = { rememberForQuickMount = it }, activeColor = PocketColors.accent)
@@ -2248,7 +2250,7 @@ private fun FileInfoBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("BOOT READINESS", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = PocketColors.textMuted)
+                        Text("BOOT READINESS", fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = PocketColors.textMuted)
                         val rpt = bootReport
                         if (rpt == null) {
                             Text("Inspecting...", style = PocketColors.monoStyle, color = PocketColors.textMuted)
@@ -2473,9 +2475,9 @@ private fun HomeScreen(
     onTapFileCard: (ImageFile) -> Unit,
     freeSpaceBytes: Long = 0L
 ) {
-    var searchQuery by remember { mutableStateOf("") }
-    var sortBy by remember { mutableStateOf(SortBy.NAME) }
-    var activeFilter by remember { mutableStateOf(DriveFilter.ALL) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var sortBy by rememberSaveable { mutableStateOf(SortBy.NAME) }
+    var activeFilter by rememberSaveable { mutableStateOf(DriveFilter.ALL) }
 
     val filteredImages = remember(images, searchQuery, sortBy, activeFilter, isoTypes.toMap()) {
         val q = searchQuery.trim().lowercase()
@@ -2979,15 +2981,7 @@ private fun HomeScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(
-                                        if (isActive) {
-                                            Brush.horizontalGradient(
-                                                colors = listOf(PocketColors.successBg.copy(alpha = 0.55f), PocketColors.surfaceCard)
-                                            )
-                                        } else {
-                                            Brush.horizontalGradient(
-                                                colors = listOf(PocketColors.surfaceCard, PocketColors.surfaceCard)
-                                            )
-                                        }
+                                        if (isActive) PocketColors.successBg.copy(alpha = 0.25f) else PocketColors.surfaceCard
                                     )
                                     .padding(horizontal = 13.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -3180,11 +3174,7 @@ private fun CommandActionTile(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(iconBg.copy(alpha = 0.35f), PocketColors.surfaceCard)
-                    )
-                )
+                .background(PocketColors.surfaceCard)
                 .padding(horizontal = 10.dp, vertical = 11.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(5.dp)
@@ -3208,7 +3198,7 @@ private fun CommandActionTile(
                 )
                 Text(
                     text = subtitle,
-                    fontSize = 10.5.sp,
+                    fontSize = 11.sp,
                     color = PocketColors.textMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -3339,11 +3329,7 @@ private fun ConnectionStatusCard(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(PocketColors.warningBg.copy(alpha = 0.5f), PocketColors.surfaceCard)
-                                )
-                            )
+                            .background(PocketColors.warningBg.copy(alpha = 0.28f))
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -3367,7 +3353,7 @@ private fun ConnectionStatusCard(
                             enabled = !busy,
                             modifier = Modifier.fillMaxWidth().height(44.dp),
                             shape = RoundedCornerShape(11.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = PocketColors.warning, contentColor = Color(0xFF09090B))
+                            colors = ButtonDefaults.buttonColors(containerColor = PocketColors.warning, contentColor = PocketColors.onBrightSurface)
                         ) {
                             Text("Check Root Again", fontWeight = FontWeight.SemiBold)
                         }
@@ -3390,11 +3376,7 @@ private fun ConnectionStatusCard(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(PocketColors.accentBg.copy(alpha = 0.48f), PocketColors.surfaceCard)
-                                )
-                            )
+                            .background(PocketColors.surfaceCard)
                             .padding(15.dp),
                         verticalArrangement = Arrangement.spacedBy(11.dp)
                     ) {
@@ -3553,11 +3535,7 @@ private fun ConnectionStatusCard(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(PocketColors.successBg.copy(alpha = 0.65f), PocketColors.surfaceCard)
-                                )
-                            )
+                            .background(PocketColors.successBg.copy(alpha = 0.28f))
                             .padding(15.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -3925,14 +3903,14 @@ private fun DualLunCombosSheet(
                                             editingCombo = combo
                                             showCreateDialog = true
                                         },
-                                        modifier = Modifier.size(30.dp)
+                                        modifier = Modifier.size(44.dp)
                                     ) {
                                         Icon(Icons.Rounded.Edit, "Edit combo", tint = PocketColors.textSecondary, modifier = Modifier.size(16.dp))
                                     }
                                 }
                                 IconButton(
                                     onClick = { onDeleteCombo(combo.id) },
-                                    modifier = Modifier.size(30.dp)
+                                    modifier = Modifier.size(44.dp)
                                 ) {
                                     Icon(Icons.Rounded.DeleteOutline, "Delete combo", tint = PocketColors.danger, modifier = Modifier.size(18.dp))
                                 }
@@ -4016,7 +3994,7 @@ private fun DualLunCombosSheet(
                                 border = BorderStroke(if (sel) 1.25.dp else 0.5.dp, if (sel) PocketColors.accent else PocketColors.border)
                             ) {
                                 Box(modifier = Modifier.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                                    Text(m.shortLabel, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = if (sel) PocketColors.accentSoft else PocketColors.textPrimary)
+                                    Text(m.shortLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (sel) PocketColors.accentSoft else PocketColors.textPrimary)
                                 }
                             }
                         }
@@ -4049,7 +4027,7 @@ private fun DualLunCombosSheet(
                                 border = BorderStroke(if (sel) 1.25.dp else 0.5.dp, if (sel) PocketColors.accent else PocketColors.border)
                             ) {
                                 Box(modifier = Modifier.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                                    Text(m.shortLabel, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = if (sel) PocketColors.accentSoft else PocketColors.textPrimary)
+                                    Text(m.shortLabel, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (sel) PocketColors.accentSoft else PocketColors.textPrimary)
                                 }
                             }
                         }

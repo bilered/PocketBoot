@@ -34,7 +34,7 @@ object IsoInspector {
 
     private val cache = ConcurrentHashMap<String, IsoOsType>()
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun invalidate(path: String) {
         val prefix = "$path|"

@@ -43,7 +43,7 @@ data class MultiBootPersistenceEntry(
  */
 object VentoyThemeCatalog {
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun normalizeRelPath(raw: String): String = "/" + raw.trim().trimStart('/')
 

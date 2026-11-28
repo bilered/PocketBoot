@@ -338,9 +338,7 @@ object UsbGadgetEngine {
         return if (blocks > 0L) blocks * 512L else 0L
     }
 
-    private fun shellQuote(value: String): String {
-        return "'${value.replace("'", "'\\''")}'"
-    }
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun fixUserStoragePermissions(context: Context?, path: String, isDir: Boolean = false) {
         runCatching {
@@ -571,7 +569,9 @@ object UsbGadgetEngine {
                 .exec().out.map { it.trim() }
                 .filter { it.isNotEmpty() && !it.startsWith("dummy_udc") }
 
-            val activeUdc = Shell.cmd("cat $gadgetPath/UDC 2>/dev/null")
+            val qGadget = shellQuote(gadgetPath)
+            val qCfg = shellQuote(cfgPath)
+            val activeUdc = Shell.cmd("cat ${shellQuote("$gadgetPath/UDC")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim()
 
             val udcName = when {
@@ -581,19 +581,19 @@ object UsbGadgetEngine {
             }
 
             val speed = if (udcName.isNotEmpty()) {
-                Shell.cmd("cat /sys/class/udc/$udcName/current_speed 2>/dev/null")
+                Shell.cmd("cat ${shellQuote("/sys/class/udc/$udcName/current_speed")} 2>/dev/null")
                     .exec().out.firstOrNull().orEmpty().trim()
             } else ""
 
             val state = if (udcName.isNotEmpty()) {
-                Shell.cmd("cat /sys/class/udc/$udcName/state 2>/dev/null")
+                Shell.cmd("cat ${shellQuote("/sys/class/udc/$udcName/state")} 2>/dev/null")
                     .exec().out.firstOrNull().orEmpty().trim()
             } else ""
 
             val usbCfg = Shell.cmd("getprop sys.usb.config 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim()
 
-            val configFsReady = Shell.cmd("[ -d $gadgetPath ] && echo yes || echo no")
+            val configFsReady = Shell.cmd("[ -d $qGadget ] && echo yes || echo no")
                 .exec().out.firstOrNull().orEmpty().trim() == "yes"
 
             val rootMgr = Shell.cmd(
@@ -604,15 +604,17 @@ object UsbGadgetEngine {
             ).exec().out.firstOrNull().orEmpty().trim().ifBlank { "Root" }
 
             val activeFuncPath = Shell.cmd(
-                "for f in $gadgetPath/functions/mass_storage.*; do " +
+                "for f in $qGadget/functions/mass_storage.*; do " +
                     "if [ -d \"${'$'}f/lun.0\" ]; then echo \"${'$'}f\"; break; fi; done"
             ).exec().out.firstOrNull().orEmpty().trim()
                 .ifBlank { "$gadgetPath/functions/mass_storage.0" }
 
             val lun0Path = "$activeFuncPath/lun.0"
             val lun1Path = "$activeFuncPath/lun.1"
+            val qFunc = shellQuote(activeFuncPath)
+            val qLun1 = shellQuote(lun1Path)
 
-            val mountedFile = Shell.cmd("cat $lun0Path/file 2>/dev/null")
+            val mountedFile = Shell.cmd("cat ${shellQuote("$lun0Path/file")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim()
 
             val mountedSize = if (mountedFile.isNotEmpty()) {
@@ -621,13 +623,13 @@ object UsbGadgetEngine {
                     .exec().out.firstOrNull()?.trim()?.toLongOrNull() ?: 0L
             } else 0L
 
-            val ro = Shell.cmd("cat $lun0Path/ro 2>/dev/null")
+            val ro = Shell.cmd("cat ${shellQuote("$lun0Path/ro")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim() != "0"
 
-            val cdrom = Shell.cmd("cat $lun0Path/cdrom 2>/dev/null")
+            val cdrom = Shell.cmd("cat ${shellQuote("$lun0Path/cdrom")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim() == "1"
 
-            val secondaryMountedFile = Shell.cmd("cat $lun1Path/file 2>/dev/null")
+            val secondaryMountedFile = Shell.cmd("cat ${shellQuote("$lun1Path/file")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim()
 
             val secondaryMountedSize = if (secondaryMountedFile.isNotEmpty()) {
@@ -636,20 +638,20 @@ object UsbGadgetEngine {
                     .exec().out.firstOrNull()?.trim()?.toLongOrNull() ?: 0L
             } else 0L
 
-            val secRo = Shell.cmd("cat $lun1Path/ro 2>/dev/null")
+            val secRo = Shell.cmd("cat ${shellQuote("$lun1Path/ro")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim() != "0"
 
-            val secCdrom = Shell.cmd("cat $lun1Path/cdrom 2>/dev/null")
+            val secCdrom = Shell.cmd("cat ${shellQuote("$lun1Path/cdrom")} 2>/dev/null")
                 .exec().out.firstOrNull().orEmpty().trim() == "1"
 
             val multiLunSupported = Shell.cmd(
-                "if [ -d \"$lun1Path\" ]; then echo yes; " +
-                    "elif [ -d \"$activeFuncPath\" ] && mkdir \"$lun1Path\" 2>/dev/null; then echo yes; " +
-                    "elif [ ! -d \"$activeFuncPath\" ] && [ -d \"$gadgetPath/functions\" ]; then echo maybe; " +
+                "if [ -d $qLun1 ]; then echo yes; " +
+                    "elif [ -d $qFunc ] && mkdir $qLun1 2>/dev/null; then echo yes; " +
+                    "elif [ ! -d $qFunc ] && [ -d ${shellQuote("$gadgetPath/functions")} ]; then echo maybe; " +
                     "else echo no; fi"
             ).exec().out.firstOrNull().orEmpty().trim().let { it == "yes" || it == "maybe" }
 
-            val adbBound = Shell.cmd("ls -l $cfgPath/ 2>/dev/null | grep -q 'ffs.adb' && echo yes || echo no")
+            val adbBound = Shell.cmd("ls -l $qCfg/ 2>/dev/null | grep -q 'ffs.adb' && echo yes || echo no")
                 .exec().out.firstOrNull().orEmpty().trim() == "yes"
 
             val selinux = Shell.cmd("getenforce 2>/dev/null")

@@ -87,7 +87,12 @@ data class DriverPackItem(
 object DriverPackManager {
     const val LIBRARY_FOLDER_NAME = "PocketBoot_Drivers"
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
+
+    internal const val MAX_EXTRACTED_PACK_BYTES = 2L * 1024L * 1024L * 1024L
+
+    internal fun isSafeChildOfLibrary(libDir: String, candidatePath: String): Boolean =
+        ShellSafety.isStrictChildPath(libDir, candidatePath)
 
     fun driverLibraryDir(defaultDir: String): String {
         val base = UsbGadgetEngine.resolveDirectPath(defaultDir).trimEnd('/')
@@ -246,6 +251,7 @@ object DriverPackManager {
                     rm -rf $qStage
                     mkdir -p $qStage
                     $q7z x -y -o$qStage $qSrc >/dev/null 2>&1
+                    find $qStage -type l -delete 2>/dev/null || true
                 )
                 """.trimIndent()
             ).exec()
@@ -258,6 +264,9 @@ object DriverPackManager {
                 return@withContext ActionResult(false, "No .inf driver files found inside ${src.substringAfterLast('/')}.")
             }
             val stageSize = UsbGadgetEngine.queryDirSizeBytes(stageDir)
+            if (stageSize > MAX_EXTRACTED_PACK_BYTES) {
+                return@withContext ActionResult(false, "Driver archive exceeds the 2 GB safety limit (${UsbGadgetEngine.formatBytes(stageSize)}).")
+            }
             val freeHost = UsbGadgetEngine.getFreeSpaceBytes(UsbGadgetEngine.resolveDirectPath(defaultDir))
             if (freeHost in 1L until (stageSize + (64L * 1024L * 1024L))) {
                 return@withContext ActionResult(false, "Not enough free phone storage (${UsbGadgetEngine.formatBytes(freeHost)} free) for extracted driver pack (${UsbGadgetEngine.formatBytes(stageSize)}).")
@@ -269,7 +278,7 @@ object DriverPackManager {
                     mkdir -p $qLib
                     rm -rf $qDst
                     mkdir -p $qDst
-                    cp -rf $qStage/. $qDst/
+                    cp -rPf $qStage/. $qDst/ 2>/dev/null || cp -rf $qStage/. $qDst/
                 )
                 """.trimIndent()
             ).exec()
@@ -291,7 +300,7 @@ object DriverPackManager {
     suspend fun deletePack(defaultDir: String, packDirPath: String): ActionResult = withContext(Dispatchers.IO) {
         val libDir = driverLibraryDir(defaultDir).trimEnd('/')
         val resolved = UsbGadgetEngine.resolveDirectPath(packDirPath).trimEnd('/')
-        if (!resolved.startsWith("$libDir/") || resolved.length <= libDir.length + 1) {
+        if (!isSafeChildOfLibrary(libDir, resolved)) {
             return@withContext ActionResult(false, "Refused to delete path outside PocketBoot Drivers library.")
         }
         val ok = Shell.cmd("rm -rf ${shellQuote(resolved)} 2>&1").exec().isSuccess
@@ -364,7 +373,7 @@ fun DriverPackMultiSelectorSection(
                                     Text(pack.name, style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(
                                         "${pack.category.label} · ${pack.infCount} .inf · ${UsbGadgetEngine.formatBytes(pack.sizeBytes)}",
-                                        fontSize = 10.5.sp,
+                                        fontSize = 11.sp,
                                         color = PocketColors.textSecondary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -517,7 +526,7 @@ fun DriverPackManagerSheet(
                                 }
                                 IconButton(
                                     onClick = { pendingDeletePack = pack },
-                                    modifier = Modifier.size(34.dp)
+                                    modifier = Modifier.size(44.dp)
                                 ) {
                                     Icon(Icons.Rounded.DeleteOutline, "Delete pack", tint = PocketColors.danger, modifier = Modifier.size(18.dp))
                                 }

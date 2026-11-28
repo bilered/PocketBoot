@@ -90,7 +90,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -597,7 +596,7 @@ fun SettingsScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.Check,
                                             contentDescription = null,
-                                            tint = if (swatchColor.luminance() > 0.48f) Color(0xFF09090B) else Color.White,
+                                            tint = if (swatchColor.luminance() > 0.48f) PocketColors.onBrightSurface else Color.White,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -687,7 +686,7 @@ fun SettingsScreen(
 
                             if (!isDefault) {
                                 Box {
-                                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
+                                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(44.dp)) {
                                         Icon(Icons.Rounded.MoreVert, "Folder options", tint = PocketColors.textSecondary, modifier = Modifier.size(18.dp))
                                     }
                                     DropdownMenu(
@@ -896,11 +895,7 @@ fun SettingsScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(PocketColors.accentBg.copy(alpha = 0.4f), PocketColors.surfaceCard)
-                            )
-                        )
+                        .background(PocketColors.surfaceCard)
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -918,7 +913,7 @@ fun SettingsScreen(
                             Icon(Icons.Rounded.Usb, null, tint = PocketColors.onAccent, modifier = Modifier.size(22.dp))
                         }
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("PocketBoot v4.10.0", style = MaterialTheme.typography.titleMedium, color = PocketColors.textPrimary)
+                            Text("PocketBoot v4.11.0", style = MaterialTheme.typography.titleMedium, color = PocketColors.textPrimary)
                             Text(
                                 text = "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -929,7 +924,7 @@ fun SettingsScreen(
                         }
                         Surface(
                             modifier = Modifier.bounceClick {
-                                val info = "PocketBoot v4.10.0\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}\nAndroid: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\nRoot: ${status.rootManager}\nSELinux: ${status.selinuxMode}\nUDC: ${status.udcName}\nKernel: ${status.kernelVersion}"
+                                val info = "PocketBoot v4.11.0\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}\nAndroid: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\nRoot: ${status.rootManager}\nSELinux: ${status.selinuxMode}\nUDC: ${status.udcName}\nKernel: ${status.kernelVersion}"
                                 val cm = context.getSystemService(ClipboardManager::class.java)
                                 cm?.setPrimaryClip(ClipData.newPlainText("Device Info", info))
                                 Toast.makeText(context, "Device info copied.", Toast.LENGTH_SHORT).show()
@@ -988,7 +983,7 @@ fun SettingsScreen(
                             onClick = {
                                 scope.launch {
                                     checkingUpdate = true
-                                    val res = AppUpdateChecker.checkForUpdate("4.10.0")
+                                    val res = AppUpdateChecker.checkForUpdate("4.11.0")
                                     checkingUpdate = false
                                     if (res.success && res.updateAvailable && res.release != null) {
                                         availableRelease = res.release
@@ -1041,7 +1036,7 @@ fun SettingsScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Update Available · ${rel.tagName}", color = PocketColors.textPrimary)
                     if (rel.publishedAt.isNotBlank()) {
-                        Text("Published ${rel.publishedAt} · Current v4.10.0", style = PocketColors.monoStyle, color = PocketColors.textMuted)
+                        Text("Published ${rel.publishedAt} · Current v4.11.0", style = PocketColors.monoStyle, color = PocketColors.textMuted)
                     }
                 }
             },
@@ -1385,7 +1380,7 @@ fun SettingsScreen(
                                 ) {
                                     Column(modifier = Modifier.padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("${n}x", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = if (isSel) PocketColors.accentSoft else PocketColors.textPrimary)
-                                        if (n == 8) Text("Rec", fontSize = 9.5.sp, color = PocketColors.success)
+                                        if (n == 8) Text("Rec", fontSize = 11.sp, color = PocketColors.success)
                                     }
                                 }
                             }

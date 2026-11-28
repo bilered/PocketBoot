@@ -550,7 +550,7 @@ fun RootFileBrowserSheet(
                                         Box {
                                             IconButton(
                                                 onClick = { menuOpen = true },
-                                                modifier = Modifier.size(34.dp)
+                                                modifier = Modifier.size(44.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Rounded.MoreVert,

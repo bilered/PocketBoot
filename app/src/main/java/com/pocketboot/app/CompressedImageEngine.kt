@@ -93,7 +93,7 @@ object CompressedImageEngine {
 
     private fun nowTs(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun cancelActiveDecompress() {
         BuildThermalHelper.cancelActiveBuildProcess()

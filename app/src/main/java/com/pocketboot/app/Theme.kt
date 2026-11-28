@@ -15,6 +15,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -33,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -52,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -123,6 +126,7 @@ object PocketColors {
     val textPrimary: Color @Composable get() = LocalPocketPalette.current.textPrimary
     val textSecondary: Color @Composable get() = LocalPocketPalette.current.textSecondary
     val textMuted: Color @Composable get() = LocalPocketPalette.current.textMuted
+    val onBrightSurface: Color = Color(0xFF09090B)
 
     val monoStyle: TextStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
@@ -172,19 +176,19 @@ fun buildPocketPalette(
             accentSoft = blend(accent, Color.Black, 0.14f),
             accentBg = blend(accent, Color.White, 0.87f),
             onAccent = onAccent,
-            success = Color(0xFF059669),
+            success = Color(0xFF047857),
             successBg = Color(0xFFE6FAF2),
-            warning = Color(0xFFD97706),
+            warning = Color(0xFF9A4D00),
             warningBg = Color(0xFFFEF5E0),
-            danger = Color(0xFFDC2626),
+            danger = Color(0xFFB91C1C),
             dangerBg = Color(0xFFFEEAEA),
-            infoBlue = Color(0xFF0284C7),
+            infoBlue = Color(0xFF0369A1),
             infoBlueBg = Color(0xFFE0F2FE),
-            violet = Color(0xFF7C3AED),
+            violet = Color(0xFF6D28D9),
             violetBg = Color(0xFFEDE9FE),
             textPrimary = Color(0xFF0F172A),
             textSecondary = Color(0xFF475569),
-            textMuted = Color(0xFF94A3B8),
+            textMuted = Color(0xFF56657A),
             switchOffTrack = Color(0xFFCBD5E1),
             switchOffThumb = Color(0xFFFFFFFF),
             switchOffBorder = Color(0xFF94A3B8)
@@ -205,7 +209,7 @@ fun buildPocketPalette(
             successBg = Color(0xFF0B2B22),
             warning = Color(0xFFF59E0B),
             warningBg = Color(0xFF2D2009),
-            danger = Color(0xFFEF4444),
+            danger = Color(0xFFF87171),
             dangerBg = Color(0xFF311318),
             infoBlue = Color(0xFF38BDF8),
             infoBlueBg = Color(0xFF0D2738),
@@ -213,7 +217,7 @@ fun buildPocketPalette(
             violetBg = Color(0xFF22183A),
             textPrimary = Color(0xFFF4F6FA),
             textSecondary = Color(0xFF9AA6BA),
-            textMuted = Color(0xFF637086),
+            textMuted = Color(0xFF8593AA),
             switchOffTrack = Color(0xFF1E2636),
             switchOffThumb = Color(0xFFD7DFEC),
             switchOffBorder = Color(0xFF36425A)
@@ -234,7 +238,7 @@ fun buildPocketPalette(
             successBg = Color(0xFF062119),
             warning = Color(0xFFF59E0B),
             warningBg = Color(0xFF261A06),
-            danger = Color(0xFFEF4444),
+            danger = Color(0xFFF87171),
             dangerBg = Color(0xFF2B0F13),
             infoBlue = Color(0xFF38BDF8),
             infoBlueBg = Color(0xFF082030),
@@ -242,7 +246,7 @@ fun buildPocketPalette(
             violetBg = Color(0xFF1C1330),
             textPrimary = Color(0xFFF8FAFC),
             textSecondary = Color(0xFF9AA6BA),
-            textMuted = Color(0xFF5D6A80),
+            textMuted = Color(0xFF818FA6),
             switchOffTrack = Color(0xFF161C29),
             switchOffThumb = Color(0xFFD7DFEC),
             switchOffBorder = Color(0xFF2F3A50)
@@ -293,8 +297,8 @@ private val PocketTypography = Typography(
     labelSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 10.5.sp,
-        lineHeight = 14.sp,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
         letterSpacing = 0.2.sp
     )
 )
@@ -417,8 +421,9 @@ fun Modifier.bounceClick(
         }
         .clickable(
             interactionSource = interactionSource,
-            indication = null,
+            indication = LocalIndication.current,
             enabled = enabled,
+            role = Role.Button,
             onClick = onClick
         )
 }
@@ -632,5 +637,54 @@ fun PocketSheetHeader(
             }
         }
         trailing?.invoke()
+    }
+}
+
+@Composable
+fun PocketStatusBadge(
+    text: String,
+    tint: Color,
+    background: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = background
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+fun PocketBanner(
+    icon: ImageVector,
+    text: String,
+    tint: Color,
+    background: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(11.dp),
+        color = background,
+        border = BorderStroke(0.75.dp, tint.copy(alpha = 0.65f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
+            Text(text = text, style = MaterialTheme.typography.bodySmall, color = PocketColors.textPrimary)
+        }
     }
 }

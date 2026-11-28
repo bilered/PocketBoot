@@ -88,7 +88,8 @@ data class OtgUsbDevice(
     val sysfsRealPath: String,
     val readOnly: Boolean,
     val mountedPoints: List<String> = emptyList(),
-    val logicalBlockSize: Int = 512
+    val logicalBlockSize: Int = 512,
+    val devMajorMinor: String = ""
 ) {
     val displayTitle: String
         get() = listOf(vendor, model).map { it.trim() }.filter { it.isNotEmpty() }
@@ -132,7 +133,7 @@ object OtgUsbFlasher {
 
     private fun nowTs(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun cancelActiveFlash() {
         BuildThermalHelper.cancelActiveBuildProcess()
@@ -299,24 +300,26 @@ object OtgUsbFlasher {
                 sectors=${'$'}(cat "${'$'}d/size" 2>/dev/null || echo 0)
                 ro=${'$'}(cat "${'$'}d/ro" 2>/dev/null || echo 1)
                 lbs=${'$'}(cat "${'$'}d/queue/logical_block_size" 2>/dev/null || echo 512)
+                devnum=${'$'}(cat "${'$'}d/dev" 2>/dev/null | tr -d '\n\r|' || echo "")
                 vendor=${'$'}(cat "${'$'}d/device/vendor" 2>/dev/null | tr '\n\r|' '   ' || echo "")
                 model=${'$'}(cat "${'$'}d/device/model" 2>/dev/null | tr '\n\r|' '   ' || echo "")
-                printf '%s|%s|%s|%s|%s|%s|%s\n' "${'$'}name" "${'$'}real" "${'$'}sectors" "${'$'}ro" "${'$'}lbs" "${'$'}vendor" "${'$'}model"
+                printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "${'$'}name" "${'$'}real" "${'$'}sectors" "${'$'}ro" "${'$'}lbs" "${'$'}devnum" "${'$'}vendor" "${'$'}model"
             done
             """.trimIndent()
         ).exec().out
 
         val devices = mutableListOf<OtgUsbDevice>()
         for (line in rawOut) {
-            val p = line.split("|", limit = 7)
-            if (p.size < 7) continue
+            val p = line.split("|", limit = 8)
+            if (p.size < 8) continue
             val name = p[0].trim()
             val real = p[1].trim()
             val sectors = p[2].trim().toLongOrNull() ?: 0L
             val ro = p[3].trim() != "0"
             val lbs = p[4].trim().toIntOrNull() ?: 512
-            val vendor = p[5].trim()
-            val model = p[6].trim()
+            val devNum = p[5].trim()
+            val vendor = p[6].trim()
+            val model = p[7].trim()
             // Linux kernel ABI (/sys/block/<dev>/size) is ALWAYS reported in 512-byte units regardless of logical_block_size
             val sizeBytes = sectors * 512L
 
@@ -348,7 +351,8 @@ object OtgUsbFlasher {
                     sysfsRealPath = real,
                     readOnly = ro,
                     mountedPoints = mntPoints,
-                    logicalBlockSize = lbs
+                    logicalBlockSize = lbs,
+                    devMajorMinor = devNum
                 )
             )
         }
@@ -431,6 +435,25 @@ object OtgUsbFlasher {
      * Read-only pre-flight hardware verification (writes 0 bytes to disk).
      * Must be called BEFORE checking capacity, layouts, tools, and assets so a failed check NEVER wipes the USB drive.
      */
+    /**
+     * Layer 10 physical identity lock: verifies the re-scanned OTG drive matches exact device name,
+     * canonical sysfs USB bus path, kernel major:minor (when present), 512-byte sector size, exact
+     * byte capacity, vendor, and model so hot-swapping another USB drive into the same port fails closed.
+     */
+    internal fun matchesVerifiedOtgTarget(requested: OtgUsbDevice, fresh: OtgUsbDevice): Boolean {
+        val majorMinorOk = requested.devMajorMinor.isBlank() ||
+            fresh.devMajorMinor.isBlank() ||
+            fresh.devMajorMinor == requested.devMajorMinor
+        return fresh.devName == requested.devName &&
+            fresh.sysfsRealPath == requested.sysfsRealPath &&
+            fresh.logicalBlockSize == 512 &&
+            !fresh.readOnly &&
+            fresh.sizeBytes == requested.sizeBytes &&
+            fresh.vendor == requested.vendor &&
+            fresh.model == requested.model &&
+            majorMinorOk
+    }
+
     internal suspend fun verifyPhysicalOtgDisk(
         requestedTarget: OtgUsbDevice
     ): Pair<OtgUsbDevice?, String?> = withContext(Dispatchers.IO) {
@@ -438,11 +461,8 @@ object OtgUsbFlasher {
             return@withContext null to "Unmount your virtual PC drive before flashing a physical USB-C OTG pen drive."
         }
         val freshList = scanUsbOtgDevices()
-        val verified = freshList.firstOrNull {
-            it.devName == requestedTarget.devName &&
-                it.sysfsRealPath == requestedTarget.sysfsRealPath &&
-                it.logicalBlockSize == 512
-        } ?: return@withContext null to "Target USB drive (${requestedTarget.devPath}) disconnected or failed safety verification. Re-scan and retry."
+        val verified = freshList.firstOrNull { matchesVerifiedOtgTarget(requestedTarget, it) }
+            ?: return@withContext null to "Target USB drive (${requestedTarget.devPath}) disconnected, changed identity, or failed safety verification. Re-scan and retry."
         verified to null
     }
 
@@ -760,7 +780,21 @@ object OtgUsbFlasher {
             }
 
             onProgress(WindowsBuildProgress("Flushing USB write cache — do NOT unplug...", verifiedTarget.displayTitle, 0.85f, true))
-            Shell.cmd("sync && blockdev --flushbufs $qDev 2>/dev/null || true").exec()
+            val syncRes = Shell.cmd("sync").exec()
+            if (!syncRes.isSuccess) {
+                entries.add(LogEntry(ts, "otg-flash", "Kernel sync returned non-zero status after write.", true))
+                return@withContext ActionResult(
+                    false,
+                    "Flash wrote data, but final kernel sync failed. Do not unplug abruptly; retry or safely eject.",
+                    entries = entries
+                )
+            }
+            val flushRes = Shell.cmd("if command -v blockdev >/dev/null 2>&1; then blockdev --flushbufs $qDev 2>&1; else true; fi").exec()
+            if (!flushRes.isSuccess) {
+                val hint = (flushRes.out + flushRes.err).takeLast(1).joinToString(" ").take(90)
+                entries.add(LogEntry(ts, "otg-flash", "blockdev --flushbufs unsupported/busy ($hint); sync succeeded — proceeding to read-back verification."))
+                Shell.cmd("sync").exec()
+            }
 
             var verifySummary = "Verification skipped"
             if (config.verifyAfterFlash) {
@@ -1321,7 +1355,7 @@ fun OtgFlasherSheet(
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         Text(s.label, style = MaterialTheme.typography.labelMedium, color = if (sel) PocketColors.accentSoft else if (disabledMbr) PocketColors.textMuted else PocketColors.textPrimary)
-                                        Text(if (disabledMbr) "Locked (>2 TiB)" else s.subtitle, fontSize = 10.sp, color = PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(if (disabledMbr) "Locked (>2 TiB)" else s.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -1408,7 +1442,7 @@ fun OtgFlasherSheet(
                                     Text(if (winDriversDir.isNotBlank()) winDriversDir.replace("/data/media/0", "/sdcard") else "Optional — tap to browse", fontSize = 11.sp, color = PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 if (winDriversDir.isNotBlank()) {
-                                    IconButton(onClick = { winDriversDir = "" }, modifier = Modifier.size(28.dp)) {
+                                    IconButton(onClick = { winDriversDir = "" }, modifier = Modifier.size(44.dp)) {
                                         Icon(Icons.Rounded.Close, "Clear folder", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp))
                                     }
                                 }
@@ -1458,7 +1492,7 @@ fun OtgFlasherSheet(
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         Text(m.title, style = MaterialTheme.typography.labelMedium, color = if (sel) PocketColors.accentSoft else PocketColors.textPrimary)
-                                        Text(m.subtitle, fontSize = 10.sp, color = PocketColors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(m.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -1476,7 +1510,7 @@ fun OtgFlasherSheet(
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         Text(wm.title, style = MaterialTheme.typography.labelMedium, color = if (sel) PocketColors.accentSoft else if (lockedFat) PocketColors.textMuted else PocketColors.textPrimary)
-                                        Text(if (lockedFat) "ISO has >4 GB file" else wm.subtitle, fontSize = 10.sp, color = PocketColors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(if (lockedFat) "ISO has >4 GB file" else wm.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -1517,7 +1551,7 @@ fun OtgFlasherSheet(
                                     ) {
                                         Column(modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp)) {
                                             Text("${st.title} (${st.volumeLabel})", style = MaterialTheme.typography.labelMedium, color = if (sel) PocketColors.accentSoft else PocketColors.textPrimary)
-                                            Text(st.subtitle, fontSize = 10.5.sp, color = PocketColors.textSecondary)
+                                            Text(st.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary)
                                         }
                                     }
                                 }
@@ -1550,7 +1584,7 @@ fun OtgFlasherSheet(
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         Text(s.label, style = MaterialTheme.typography.labelMedium, color = if (sel) PocketColors.accentSoft else if (disabledMbr) PocketColors.textMuted else PocketColors.textPrimary)
-                                        Text(if (disabledMbr) "Locked (>2 TiB)" else s.subtitle, fontSize = 10.sp, color = PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(if (disabledMbr) "Locked (>2 TiB)" else s.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -1677,7 +1711,7 @@ fun OtgFlasherSheet(
                                     Icon(Icons.Rounded.FolderOpen, null, tint = PocketColors.accentSoft, modifier = Modifier.size(17.dp))
                                     Text(if (mbDriversDir.isNotBlank()) mbDriversDir.replace("/data/media/0", "/sdcard") else "Extra WinPE Drivers Folder (Optional)", fontSize = 11.5.sp, color = PocketColors.textSecondary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (mbDriversDir.isNotBlank()) {
-                                        IconButton(onClick = { mbDriversDir = "" }, modifier = Modifier.size(26.dp)) {
+                                        IconButton(onClick = { mbDriversDir = "" }, modifier = Modifier.size(44.dp)) {
                                             Icon(Icons.Rounded.Close, "Clear", tint = PocketColors.textMuted, modifier = Modifier.size(14.dp))
                                         }
                                     }
@@ -1785,7 +1819,12 @@ fun OtgFlasherSheet(
                     Surface(shape = RoundedCornerShape(9.dp), color = PocketColors.dangerBg, border = BorderStroke(0.75.dp, PocketColors.danger)) {
                         Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text("Target: ${activeTarget.displayTitle}", style = MaterialTheme.typography.labelLarge, color = PocketColors.textPrimary)
-                            Text("Device: ${activeTarget.devPath} (${UsbGadgetEngine.formatBytes(activeTarget.sizeBytes)})", style = PocketColors.monoStyle, color = PocketColors.textSecondary)
+                            val devIdMeta = buildString {
+                                append(activeTarget.devPath)
+                                if (activeTarget.devMajorMinor.isNotBlank()) append(" · dev ${activeTarget.devMajorMinor}")
+                                append(" · ${activeTarget.logicalBlockSize} B")
+                            }
+                            Text("Device: $devIdMeta (${UsbGadgetEngine.formatBytes(activeTarget.sizeBytes)})", style = PocketColors.monoStyle, color = PocketColors.textSecondary)
                             Text("Mode: $modeSummaryForConfirm", style = PocketColors.monoStyle, color = PocketColors.textSecondary)
                         }
                     }

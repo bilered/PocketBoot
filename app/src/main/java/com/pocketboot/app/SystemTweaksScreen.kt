@@ -12,6 +12,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -61,6 +64,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -941,8 +945,8 @@ fun SystemTweaksScreen(
     onUpdateSearchHistory: (List<String>) -> Unit
 ) {
     var draft by remember(config) { mutableStateOf(config) }
-    var searchQuery by remember { mutableStateOf("") }
-    var activeOnly by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var activeOnly by rememberSaveable { mutableStateOf(false) }
     var lastSelectedPreset by remember(config) {
         val norm = config.normalizedForComparison()
         mutableStateOf(
@@ -1076,15 +1080,21 @@ fun SystemTweaksScreen(
                     }
                 }
 
-                // ===== SCROLLABLE BODY =====
-                Column(
+                // ===== SCROLLABLE BODY (Keyed LazyColumn) =====
+                val visibleSectionsWithMatches = TweakSection.entries.mapNotNull { section ->
+                    val sectionSpecs = TWEAK_CATALOG.filter { it.section == section && matchesQuery(it) }
+                    val showMpoInSection = section == TweakSection.PREFERENCES && mpoMatchesFilter
+                    if (sectionSpecs.isEmpty() && !showMpoInSection) null else Triple(section, sectionSpecs, showMpoInSection)
+                }
+                LazyColumn(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    item(key = "tweaks_controls") {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // Search Bar with Persistent History
                     OutlinedTextField(
                         value = searchQuery,
@@ -1306,7 +1316,7 @@ fun SystemTweaksScreen(
                                         )
                                         if (tag != null) {
                                             Surface(shape = RoundedCornerShape(4.dp), color = PocketColors.successBg) {
-                                                Text(tag, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp), fontSize = 9.sp, color = PocketColors.success)
+                                                Text(tag, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp), fontSize = 11.sp, color = PocketColors.success)
                                             }
                                         }
                                     }
@@ -1391,14 +1401,11 @@ fun SystemTweaksScreen(
                         }
                     }
 
-                    // ===== SECTIONED TWEAK LIST =====
-                    var visibleMatches = 0
-                    TweakSection.entries.forEach { section ->
-                        val sectionSpecs = TWEAK_CATALOG.filter { it.section == section && matchesQuery(it) }
-                        val showMpoInSection = section == TweakSection.PREFERENCES && mpoMatchesFilter
-                        val sectionTotalMatches = sectionSpecs.size + if (showMpoInSection) 1 else 0
-                        if (sectionTotalMatches == 0) return@forEach
-                        visibleMatches += sectionTotalMatches
+                    }
+                    }
+
+                    // ===== SECTIONED TWEAK LIST (Lazily Recycled by Section) =====
+                    items(visibleSectionsWithMatches, key = { "sec_${it.first.name}" }) { (section, sectionSpecs, showMpoInSection) ->
 
                         val activeInSection = when (section) {
                             TweakSection.ESSENTIAL -> draft.essentialActiveCount()
@@ -1506,7 +1513,7 @@ fun SystemTweaksScreen(
                                                     Icon(Icons.Rounded.WarningAmber, null, tint = PocketColors.warning, modifier = Modifier.size(15.dp))
                                                     Text(
                                                         text = "Advanced tweaks modify core policies, browsers, services, or power plans. Tap (i) on any tweak to see exact changes.",
-                                                        fontSize = 10.5.sp,
+                                                        fontSize = 11.sp,
                                                         color = PocketColors.textPrimary
                                                     )
                                                 }
@@ -1590,7 +1597,7 @@ fun SystemTweaksScreen(
                                                                             modifier = Modifier.size(16.dp)
                                                                         )
                                                                         Text(display, fontSize = 11.5.sp, color = PocketColors.textPrimary, modifier = Modifier.weight(1f))
-                                                                        Text(if (willRemove) "Remove" else "Keep", fontSize = 10.sp, color = if (willRemove) PocketColors.warning else PocketColors.success)
+                                                                        Text(if (willRemove) "Remove" else "Keep", fontSize = 11.sp, color = if (willRemove) PocketColors.warning else PocketColors.success)
                                                                     }
                                                                 }
                                                             }
@@ -1621,7 +1628,7 @@ fun SystemTweaksScreen(
                                                     ) {
                                                         Column(modifier = Modifier.weight(1f)) {
                                                             Text("Multiplane Overlay (MPO)", style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
-                                                            Text("Fixes GPU flicker/stutter in browsers & games on some drivers", fontSize = 10.5.sp, color = PocketColors.textSecondary)
+                                                            Text("Fixes GPU flicker/stutter in browsers & games on some drivers", fontSize = 11.sp, color = PocketColors.textSecondary)
                                                         }
                                                         IconButton(
                                                             onClick = {
@@ -1633,7 +1640,7 @@ fun SystemTweaksScreen(
                                                                     sideEffects = "Disabling MPO fixes black-screen/flicker bugs on certain NVIDIA/AMD drivers with minimal overhead."
                                                                 )
                                                             },
-                                                            modifier = Modifier.size(28.dp)
+                                                            modifier = Modifier.size(44.dp)
                                                         ) {
                                                             Icon(Icons.Rounded.Info, "Info", tint = PocketColors.textMuted, modifier = Modifier.size(16.dp))
                                                         }
@@ -1669,32 +1676,36 @@ fun SystemTweaksScreen(
                         }
                     }
 
-                    if (visibleMatches == 0) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = PocketColors.surfaceCard,
-                            border = BorderStroke(0.5.dp, PocketColors.border)
-                        ) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth().padding(20.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    if (visibleSectionsWithMatches.isEmpty()) {
+                        item(key = "tweaks_empty") {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = PocketColors.surfaceCard,
+                                border = BorderStroke(0.5.dp, PocketColors.border)
                             ) {
-                                Text(
-                                    text = if (activeOnly && totalActive == 0) "No tweaks enabled yet" else "No matching tweaks found",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = PocketColors.textPrimary
-                                )
-                                Text(
-                                    text = if (activeOnly && totalActive == 0) "Turn off Active Only or select a preset above." else "Try a broader keyword or clear your search filter.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = PocketColors.textSecondary
-                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = if (activeOnly && totalActive == 0) "No tweaks enabled yet" else "No matching tweaks found",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = PocketColors.textPrimary
+                                    )
+                                    Text(
+                                        text = if (activeOnly && totalActive == 0) "Turn off Active Only or select a preset above." else "Try a broader keyword or clear your search filter.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = PocketColors.textSecondary
+                                    )
+                                }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    item(key = "tweaks_spacer") {
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
                 }
 
                 // ===== STICKY BOTTOM ACTION BAR =====
@@ -1770,7 +1781,7 @@ fun SystemTweaksScreen(
                     ) {
                         Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text("Exact Changes", style = MaterialTheme.typography.labelSmall, color = PocketColors.accentSoft)
-                            Text(info.technicalDetails, style = PocketColors.monoStyle, fontSize = 10.5.sp, color = PocketColors.textSecondary)
+                            Text(info.technicalDetails, style = PocketColors.monoStyle, fontSize = 11.sp, color = PocketColors.textSecondary)
                         }
                     }
                     if (info.sideEffects.isNotBlank()) {
@@ -1831,7 +1842,7 @@ fun SystemTweaksScreen(
                     if (isReservedName) {
                         Text(
                             text = "This name is reserved for a built-in preset. Choose a different name.",
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             color = PocketColors.warning
                         )
                     }
@@ -1910,7 +1921,7 @@ fun SystemTweaksScreen(
                             1 -> scText
                             else -> undoText
                         }
-                        Text(body, style = PocketColors.monoStyle, fontSize = 10.sp, color = PocketColors.textSecondary, modifier = Modifier.padding(10.dp).verticalScroll(rememberScrollState()))
+                        Text(body, style = PocketColors.monoStyle, fontSize = 11.sp, color = PocketColors.textSecondary, modifier = Modifier.padding(10.dp).verticalScroll(rememberScrollState()))
                     }
                 }
             },
@@ -1979,9 +1990,9 @@ private fun TweakSwitchRowWithInfo(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(title, style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
-                Text(subtitle, fontSize = 10.5.sp, color = if (warningAccent && checked) PocketColors.warning else PocketColors.textSecondary)
+                Text(subtitle, fontSize = 11.sp, color = if (warningAccent && checked) PocketColors.warning else PocketColors.textSecondary)
             }
-            IconButton(onClick = onInfoClick, modifier = Modifier.size(28.dp)) {
+            IconButton(onClick = onInfoClick, modifier = Modifier.size(44.dp)) {
                 Icon(Icons.Rounded.Info, "Details for $title", tint = PocketColors.textMuted, modifier = Modifier.size(16.dp))
             }
             PocketSwitch(

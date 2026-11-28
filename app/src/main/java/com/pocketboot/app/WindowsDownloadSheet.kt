@@ -357,7 +357,7 @@ fun WindowsDownloadSheet(
                                 )
                                 Text(
                                     text = src.badge,
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     color = if (sel) PocketColors.success else PocketColors.textMuted,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -414,7 +414,7 @@ fun WindowsDownloadSheet(
                                                 color = if (isSel) PocketColors.accentSoft else PocketColors.textSecondary
                                             )
                                             if (idx == 0) {
-                                                Text("Latest", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
+                                                Text("Latest", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
                                             }
                                         }
                                     }
@@ -457,7 +457,7 @@ fun WindowsDownloadSheet(
                                                 color = if (isSel) PocketColors.infoBlue else PocketColors.textSecondary
                                             )
                                             if (idx == 0 && ntMajorVersions.size <= 1) {
-                                                Text("Latest", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
+                                                Text("Latest", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
                                             }
                                         }
                                     }
@@ -493,7 +493,7 @@ fun WindowsDownloadSheet(
                                 Row(modifier = Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.CalendarMonth, null, tint = PocketColors.success, modifier = Modifier.size(18.dp))
                                     Column {
-                                        Text("BUILD", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
+                                        Text("BUILD", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
                                         Text(sec.buildBadge.ifBlank { sec.shortChipLabel }, style = PocketColors.monoStyle, color = PocketColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
@@ -508,7 +508,7 @@ fun WindowsDownloadSheet(
                                 Row(modifier = Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.VerifiedUser, null, tint = if (isStatic) PocketColors.success else PocketColors.infoBlue, modifier = Modifier.size(18.dp))
                                     Column {
-                                        Text("SOURCE", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
+                                        Text("SOURCE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
                                         Text(
                                             if (isStatic) "MS Static CDN" else "NTriver Drive",
                                             style = PocketColors.monoStyle,
@@ -691,7 +691,7 @@ fun WindowsDownloadSheet(
                                             Surface(shape = RoundedCornerShape(6.dp), color = PocketColors.successBg) {
                                                 Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                                     Icon(Icons.Rounded.CheckCircle, null, tint = PocketColors.success, modifier = Modifier.size(12.dp))
-                                                    Text("Saved", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
+                                                    Text("Saved", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
                                                 }
                                             }
                                         }
@@ -710,7 +710,7 @@ fun WindowsDownloadSheet(
                                             Text(
                                                 text = "SHA-256: ${entry.sha256.take(16)}…${entry.sha256.takeLast(8)} (Auto-Verify)",
                                                 style = PocketColors.monoStyle,
-                                                fontSize = 10.5.sp,
+                                                fontSize = 11.sp,
                                                 color = PocketColors.textSecondary,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
@@ -887,7 +887,7 @@ fun WindowsDownloadSheet(
                                                 color = if (isSel) PocketColors.accentSoft else PocketColors.textSecondary
                                             )
                                             if (idx == 0) {
-                                                Text("Latest", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
+                                                Text("Latest", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = PocketColors.success)
                                             }
                                         }
                                     }
@@ -960,7 +960,7 @@ fun WindowsDownloadSheet(
                                 Row(modifier = Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.Tag, null, tint = PocketColors.infoBlue, modifier = Modifier.size(18.dp))
                                     Column {
-                                        Text("EDITION ID", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
+                                        Text("EDITION ID", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
                                         val badgeArch = if (rel.osFamily == "win10" || rel.osFamily == "win81") directWin10Arch else if (rel.isArm64Only) "ARM64" else "x64"
                                         Text("#${rel.editionId} · $badgeArch", style = PocketColors.monoStyle, color = PocketColors.textPrimary)
                                     }
@@ -975,7 +975,7 @@ fun WindowsDownloadSheet(
                                 Row(modifier = Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.CalendarMonth, null, tint = PocketColors.success, modifier = Modifier.size(18.dp))
                                     Column {
-                                        Text("RELEASE", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
+                                        Text("RELEASE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp, color = PocketColors.textMuted)
                                         Text(rel.releaseLabel.take(24), style = PocketColors.monoStyle, color = PocketColors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }

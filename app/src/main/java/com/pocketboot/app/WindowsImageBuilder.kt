@@ -105,7 +105,7 @@ object WindowsImageBuilder {
 
     private fun nowTs(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun isLikelyWindowsName(fileName: String): Boolean =
         IsoInspector.quickGuessByName(fileName) == IsoOsType.WINDOWS
@@ -316,10 +316,29 @@ object WindowsImageBuilder {
                 instanceFollowRedirects = true
             }
             try {
-                if (conn.responseCode in 200..299) {
-                    val bytes = conn.inputStream.use { it.readBytes() }
+                val code = conn.responseCode
+                if (!conn.url.protocol.equals("https", ignoreCase = true)) return null
+                if (code in 200..299) {
+                    val maxBytes = 16 * 1024 * 1024
+                    if (conn.contentLengthLong > maxBytes.toLong()) return null
+                    val baos = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(16384)
+                    conn.inputStream.use { input ->
+                        while (true) {
+                            val r = input.read(buf)
+                            if (r <= 0) break
+                            if (baos.size() + r > maxBytes) return null
+                            baos.write(buf, 0, r)
+                        }
+                    }
+                    val bytes = baos.toByteArray()
                     if (bytes.size >= 65536) {
-                        cached.writeBytes(bytes)
+                        val tmp = File(context.filesDir, "uefi-ntfs.img.tmp")
+                        tmp.writeBytes(bytes)
+                        if (!tmp.renameTo(cached)) {
+                            cached.writeBytes(bytes)
+                            tmp.delete()
+                        }
                         return bytes
                     }
                 }
@@ -1252,7 +1271,7 @@ fun WindowsBuilderSheet(
                             Surface(modifier = Modifier.weight(1f).bounceClick { scheme = s }, shape = RoundedCornerShape(12.dp), color = if (selected) PocketColors.accentBg else PocketColors.surfaceInput, border = BorderStroke(if (selected) 1.5.dp else 0.75.dp, if (selected) PocketColors.accent else PocketColors.border)) {
                                 Column(modifier = Modifier.padding(11.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(s.label, style = MaterialTheme.typography.labelLarge, color = if (selected) PocketColors.accentSoft else PocketColors.textPrimary)
-                                    Text(s.subtitle, fontSize = 10.5.sp, color = PocketColors.textSecondary)
+                                    Text(s.subtitle, fontSize = 11.sp, color = PocketColors.textSecondary)
                                 }
                             }
                         }
@@ -1279,7 +1298,7 @@ fun WindowsBuilderSheet(
                         if (selectedEditionIndex != null) {
                             Text(
                                 text = "Pre-selecting an edition injects Autounattend.xml into boot.wim and skips Product Key, Edition & EULA prompts. Keep \"Ask during Setup\" for full official Windows Setup UI.",
-                                fontSize = 10.5.sp,
+                                fontSize = 11.sp,
                                 color = PocketColors.textSecondary
                             )
                         }
@@ -1351,7 +1370,7 @@ fun WindowsBuilderSheet(
                             Text("Include Driver / Apps Folder (/Drivers)", style = MaterialTheme.typography.labelMedium, color = PocketColors.textPrimary)
                             Text(if (extraDriversDir.isNotBlank()) extraDriversDir.replace("/data/media/0", "/sdcard") else "Tap to browse and select a folder (Intel RST, Wi-Fi, etc.)", fontSize = 11.sp, color = if (extraDriversDir.isNotBlank()) PocketColors.accentSoft else PocketColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (extraDriversDir.isNotBlank()) { IconButton(onClick = { extraDriversDir = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.Close, "Clear folder", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp)) } }
+                        if (extraDriversDir.isNotBlank()) { IconButton(onClick = { extraDriversDir = "" }, modifier = Modifier.size(44.dp)) { Icon(Icons.Rounded.Close, "Clear folder", tint = PocketColors.textMuted, modifier = Modifier.size(15.dp)) } }
                         else Text("Browse", style = MaterialTheme.typography.labelSmall, color = PocketColors.accentSoft)
                     }
                 }
@@ -1370,7 +1389,7 @@ fun WindowsBuilderSheet(
                     if (volumeLabel.trim().length > IsoInspector.EXPLORER_SINGLE_LINE_SAFE_MAX) {
                         Text(
                             text = "Over ${IsoInspector.EXPLORER_SINGLE_LINE_SAFE_MAX} chars may wrap in Windows Explorer Tiles view and hide free/total space.",
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             color = PocketColors.warning
                         )
                     }

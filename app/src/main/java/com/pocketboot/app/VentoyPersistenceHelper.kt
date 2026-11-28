@@ -17,7 +17,7 @@ object VentoyPersistenceHelper {
     private const val TEMP_PERS_SEED_DIR = "/data/local/tmp/pb_vtoy_pers_seed"
     private const val TEMP_PERS_STAGE_FILE = "/data/local/tmp/pb_vtoy_pers_stage.dat"
 
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+    private fun shellQuote(value: String): String = ShellSafety.shellQuote(value)
 
     fun isLinuxPersistenceEligible(fileName: String): Boolean {
         if (!fileName.endsWith(".iso", ignoreCase = true)) return false
